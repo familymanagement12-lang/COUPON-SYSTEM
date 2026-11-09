@@ -10,7 +10,6 @@ export default function Register() {
     username: '',
     email: '',
     phone: '',
-    role: 'parent',
     password: '',
     confirmPassword: ''
   })
@@ -60,35 +59,36 @@ export default function Register() {
 
           <div className="field">
             <label htmlFor="username">Username</label>
-            <input id="username" required value={form.username} onChange={e => updateField('username', e.target.value)} />
+            <input id="username" required minLength="3" maxLength="32" pattern="[A-Za-z0-9._-]+" title="Use 3-32 letters, numbers, dots, underscores, or hyphens" value={form.username} onChange={e => updateField('username', e.target.value)} />
           </div>
 
           <div className="field">
             <label htmlFor="email">Email</label>
-            <input id="email" type="email" required value={form.email} onChange={e => updateField('email', e.target.value)} />
+            <input id="email" type="email" maxLength="255" required value={form.email} onChange={e => updateField('email', e.target.value)} />
           </div>
 
           <div className="form-grid">
             <div className="field">
               <label htmlFor="phone">Phone</label>
-              <input id="phone" value={form.phone} onChange={e => updateField('phone', e.target.value)} />
+              <input id="phone" type="tel" maxLength="20" pattern="\+?[0-9][0-9\s().-]{4,19}" title="Enter a valid phone number" value={form.phone} onChange={e => updateField('phone', e.target.value)} />
             </div>
             <div className="field">
-              <label htmlFor="role">Account type</label>
-              <input id="role" value="Parent" readOnly />
+              <label htmlFor="accountType">Account type</label>
+              <input id="accountType" value="Parent" readOnly />
             </div>
           </div>
 
           <div className="form-grid">
             <div className="field">
               <label htmlFor="password">Password</label>
-              <input id="password" type="password" required minLength="8" value={form.password} onChange={e => updateField('password', e.target.value)} />
+              <input id="password" type="password" required minLength="12" value={form.password} onChange={e => updateField('password', e.target.value)} />
             </div>
             <div className="field">
               <label htmlFor="confirmPassword">Confirm password</label>
-              <input id="confirmPassword" type="password" required minLength="8" value={form.confirmPassword} onChange={e => updateField('confirmPassword', e.target.value)} />
+              <input id="confirmPassword" type="password" required minLength="12" value={form.confirmPassword} onChange={e => updateField('confirmPassword', e.target.value)} />
             </div>
           </div>
+          <p className="auth-switch">Use at least 12 characters for your password.</p>
 
           {error && <p className="error">{error}</p>}
           <button className="primary-button" type="submit" disabled={loading}>{loading ? 'Creating account...' : 'Create account'}</button>

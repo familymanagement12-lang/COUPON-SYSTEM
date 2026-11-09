@@ -6,9 +6,21 @@ const Wallet = require('../models/Wallet');
 const JWTUtil = require('../utils/jwt');
 const ResponseHandler = require('../utils/response');
 const { query } = require('../config/database');
+const { getClient } = require('../config/database');
 const { isSuperAdmin } = require('../middleware/auth');
+const EmailService = require('../services/EmailService');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
+
+const PASSWORD_MIN_LENGTH = 12;
+const PASSWORD_MAX_BYTES = 72;
+
+const isValidPassword = (password) => typeof password === 'string'
+  && password.length >= PASSWORD_MIN_LENGTH
+  && Buffer.byteLength(password, 'utf8') <= PASSWORD_MAX_BYTES;
+
+const isValidEmail = (email) => email.length <= 255
+  && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
 class AuthController {
   static async forgotPassword(req, res) {
@@ -16,10 +28,29 @@ class AuthController {
       const identifier = String(req.body?.identifier || '').trim();
       if (!identifier) return ResponseHandler.badRequest(res, 'Email or username is required');
 
-      const emailResult = await query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [identifier]);
+      if (process.env.NODE_ENV === 'production' && !EmailService.isConfigured()) {
+        return ResponseHandler.error(res, 'Password reset email is not configured', 503);
+      }
+
+      const frontendOrigin = String(process.env.FRONTEND_URL || 'http://localhost:5173')
+        .split(',')[0]
+        .trim();
+      const frontendUrl = new URL(frontendOrigin);
+      if (!['https:', 'http:'].includes(frontendUrl.protocol)
+        || frontendUrl.username
+        || frontendUrl.password
+        || (process.env.NODE_ENV === 'production' && frontendUrl.protocol !== 'https:')) {
+        return ResponseHandler.error(res, 'Password reset frontend URL must use HTTPS', 503);
+      }
+      const frontendBase = frontendUrl.origin;
+
+      const emailResult = await query(
+        'SELECT id, email, status FROM users WHERE LOWER(BTRIM(email)) = LOWER(BTRIM($1))',
+        [identifier]
+      );
       const user = emailResult.rows[0] || await User.findByUsername(identifier);
-      const response = { message: 'If an account matches, password reset instructions have been created.' };
-      if (!user || user.status === 'deleted') return ResponseHandler.success(res, response.message, response);
+      const message = 'If an account exists, password reset instructions will be sent.';
+      if (!user || user.status !== 'active') return ResponseHandler.success(res, message, { message });
 
       const rawToken = crypto.randomBytes(32).toString('hex');
       const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
@@ -30,24 +61,49 @@ class AuthController {
         [user.id, tokenHash]
       );
 
-      const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password?token=${rawToken}`;
-      console.log(`Password reset link for ${user.email}: ${resetUrl}`);
-      if (process.env.NODE_ENV !== 'production') response.resetUrl = resetUrl;
-      return ResponseHandler.success(res, response.message, response);
+      const resetUrl = new URL('/reset-password', frontendBase);
+      resetUrl.searchParams.set('token', rawToken);
+
+      if (EmailService.isConfigured()) {
+        try {
+          await EmailService.sendPasswordReset(user.email, resetUrl.toString());
+        } catch (error) {
+          await query(
+            'UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND used_at IS NULL',
+            [user.id]
+          );
+          console.error('Password reset email delivery failed:', error.message);
+          return ResponseHandler.error(res, 'Unable to send password reset email', 503);
+        }
+      } else if (process.env.NODE_ENV === 'production') {
+        return ResponseHandler.error(res, 'Password reset email is not configured', 503);
+      }
+
+      const response = { message };
+      if (process.env.NODE_ENV !== 'production' && !EmailService.isConfigured()) {
+        response.resetUrl = resetUrl.toString();
+      }
+      return ResponseHandler.success(res, message, response);
     } catch (error) {
-      console.error('Forgot password error:', error);
+      console.error('Forgot password error:', error.message);
       return ResponseHandler.serverError(res, 'Unable to create password reset request');
     }
   }
 
   static async resetPassword(req, res) {
-    const client = await require('../config/database').getClient();
+    let client;
     try {
-      const { token, newPassword, confirmPassword } = req.body;
+      const { token, newPassword, confirmPassword } = req.body || {};
       if (!token || !newPassword || !confirmPassword) return ResponseHandler.badRequest(res, 'Token and all password fields are required');
       if (newPassword !== confirmPassword) return ResponseHandler.badRequest(res, 'Passwords do not match');
-      if (newPassword.length < 8) return ResponseHandler.badRequest(res, 'Password must be at least 8 characters long');
+      if (!isValidPassword(newPassword)) {
+        return ResponseHandler.badRequest(res, `Password must be at least ${PASSWORD_MIN_LENGTH} characters and no more than ${PASSWORD_MAX_BYTES} UTF-8 bytes`);
+      }
+      if (typeof token !== 'string' || !/^[a-f0-9]{64}$/i.test(token)) {
+        return ResponseHandler.badRequest(res, 'This password reset link is invalid or expired');
+      }
 
+      client = await getClient();
       const tokenHash = crypto.createHash('sha256').update(String(token)).digest('hex');
       await client.query('BEGIN');
       const tokenResult = await client.query(
@@ -63,15 +119,18 @@ class AuthController {
 
       const passwordHash = await bcrypt.hash(newPassword, 10);
       await client.query('UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [passwordHash, tokenResult.rows[0].user_id]);
-      await client.query('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = $1', [tokenResult.rows[0].id]);
+      await client.query(
+        'UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND used_at IS NULL',
+        [tokenResult.rows[0].user_id]
+      );
       await client.query('COMMIT');
       return ResponseHandler.success(res, 'Password reset successfully');
     } catch (error) {
-      await client.query('ROLLBACK');
-      console.error('Reset password error:', error);
+      if (client) await client.query('ROLLBACK').catch(() => {});
+      console.error('Reset password error:', error.message);
       return ResponseHandler.serverError(res, 'Unable to reset password');
     } finally {
-      client.release();
+      client?.release();
     }
   }
 
@@ -79,49 +138,65 @@ class AuthController {
    * User Registration
    */
   static async register(req, res) {
+    let client;
     try {
-      const { username, email, phone, password, confirmPassword, role, firstName, lastName } = req.body;
+      const body = req.body || {};
+      const username = typeof body.username === 'string' ? body.username.trim() : '';
+      const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+      const phone = typeof body.phone === 'string' ? body.phone.trim() : '';
+      const firstName = typeof body.firstName === 'string' ? body.firstName.trim() : '';
+      const lastName = typeof body.lastName === 'string' ? body.lastName.trim() : '';
+      const { password, confirmPassword } = body;
+      const privilegedRegistration = req.user?.status === 'active' && isSuperAdmin(req.user);
+      const role = privilegedRegistration ? body.role : 'parent';
 
-      // Validation
-      if (!username || !email || !password || !role) {
-        return ResponseHandler.badRequest(res, 'Missing required fields: username, email, password, role');
+      if (!username || !email || !password || !confirmPassword || (privilegedRegistration && !role)) {
+        return ResponseHandler.badRequest(res, 'Username, email, password, and password confirmation are required');
       }
-
-      if (password !== confirmPassword) {
-        return ResponseHandler.badRequest(res, 'Passwords do not match');
+      if (username.length < 3 || username.length > 32 || !/^[a-zA-Z0-9._-]+$/.test(username)) {
+        return ResponseHandler.badRequest(res, 'Username must be 3-32 characters using letters, numbers, dots, underscores, or hyphens');
       }
-
-      if (password.length < 8) {
-        return ResponseHandler.badRequest(res, 'Password must be at least 8 characters long');
+      if (!isValidEmail(email)) return ResponseHandler.badRequest(res, 'Enter a valid email address');
+      if (phone && (phone.length > 20 || !/^\+?[0-9][0-9\s().-]{4,19}$/.test(phone))) {
+        return ResponseHandler.badRequest(res, 'Enter a valid phone number');
       }
-
-      if (role !== 'parent' && !isSuperAdmin(req.user)) {
-        return ResponseHandler.forbidden(res, 'Public account creation is limited to parents');
+      if (password !== confirmPassword) return ResponseHandler.badRequest(res, 'Passwords do not match');
+      if (!isValidPassword(password)) {
+        return ResponseHandler.badRequest(res, `Password must be at least ${PASSWORD_MIN_LENGTH} characters and no more than ${PASSWORD_MAX_BYTES} UTF-8 bytes`);
       }
-
+      if (privilegedRegistration && !['admin', 'parent', 'student', 'vendor'].includes(role)) {
+        return ResponseHandler.badRequest(res, 'Invalid user role');
+      }
+      if (firstName.length > 255 || lastName.length > 255) {
+        return ResponseHandler.badRequest(res, 'Names must be 255 characters or fewer');
+      }
       if ((role === 'student' || role === 'parent') && (!firstName || !lastName)) {
         return ResponseHandler.badRequest(res, 'First name and last name are required for student and parent accounts');
       }
 
-      // Check if user already exists
-      const existingUser = await User.findByEmail(email);
-      if (existingUser) {
-        return ResponseHandler.badRequest(res, 'Email already registered');
-      }
+      const emailResult = await query('SELECT id FROM users WHERE LOWER(BTRIM(email)) = $1', [email]);
+      if (emailResult.rows[0]) return ResponseHandler.error(res, 'Email already registered', 409);
 
       const existingUsername = await User.findByUsername(username);
-      if (existingUsername) {
-        return ResponseHandler.badRequest(res, 'Username already taken');
-      }
+      if (existingUsername) return ResponseHandler.error(res, 'Username already taken', 409);
 
-      // Create user
-      const user = await User.create({
-        username,
-        email,
-        phone,
-        password,
-        role
-      });
+      const userData = { username, email, phone: phone || null, password, role };
+      let user;
+      let parent;
+      if (role === 'parent') {
+        client = await getClient();
+        await client.query('BEGIN');
+        user = await User.create(userData, client);
+        parent = await Parent.create({
+          userId: user.id,
+          firstName,
+          lastName,
+          relationship: null
+        }, client);
+        await client.query('COMMIT');
+      } else {
+        user = await User.create(userData);
+      }
 
       const payload = {
         userId: user.id,
@@ -130,7 +205,6 @@ class AuthController {
         role: user.role
       };
 
-      // Create role-specific records
       if (role === 'student') {
         const student = await Student.create({
           userId: user.id,
@@ -141,13 +215,6 @@ class AuthController {
           dateOfBirth: null
         });
         await Wallet.create(student.id, 0);
-      } else if (role === 'parent') {
-        await Parent.create({
-          userId: user.id,
-          firstName,
-          lastName,
-          relationship: null
-        });
       } else if (role === 'vendor') {
         const vendor = await Vendor.create({
           userId: user.id,
@@ -166,13 +233,28 @@ class AuthController {
           id: user.id,
           username: user.username,
           email: user.email,
-          role: user.role
+          phone: user.phone,
+          role: user.role,
+          ...(parent ? { parentId: parent.id } : {})
         },
         tokens
       });
     } catch (error) {
-      console.error('Registration error:', error);
+      if (error.code === '23505') {
+        if (client) await client.query('ROLLBACK').catch(() => {});
+        const constraint = error.constraint || '';
+        const message = /email/i.test(constraint)
+          ? 'Email already registered'
+          : /username/i.test(constraint)
+            ? 'Username already taken'
+            : 'An account with these details already exists';
+        return ResponseHandler.error(res, message, 409);
+      }
+      if (client) await client.query('ROLLBACK').catch(() => {});
+      console.error('Registration error:', error.message);
       return ResponseHandler.serverError(res, 'Registration failed');
+    } finally {
+      client?.release();
     }
   }
 
@@ -188,7 +270,10 @@ class AuthController {
       }
 
       // Find user by email or username
-      const emailResult = await query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [identifier]);
+      const emailResult = await query(
+        'SELECT * FROM users WHERE LOWER(BTRIM(email)) = LOWER(BTRIM($1))',
+        [identifier]
+      );
       let user = emailResult.rows[0];
       if (!user) {
         user = await User.findByUsername(identifier);
@@ -397,8 +482,8 @@ class AuthController {
         return ResponseHandler.badRequest(res, 'New passwords do not match');
       }
 
-      if (newPassword.length < 8) {
-        return ResponseHandler.badRequest(res, 'New password must be at least 8 characters long');
+      if (!isValidPassword(newPassword)) {
+        return ResponseHandler.badRequest(res, `Password must be at least ${PASSWORD_MIN_LENGTH} characters and no more than ${PASSWORD_MAX_BYTES} UTF-8 bytes`);
       }
 
       // Verify current password

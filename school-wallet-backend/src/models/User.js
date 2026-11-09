@@ -2,13 +2,14 @@ const { query } = require('../config/database');
 const bcrypt = require('bcrypt');
 
 class User {
-  static async create(userData) {
+  static async create(userData, client) {
     const { username, email, phone, password, role } = userData;
+    const execute = client ? client.query.bind(client) : query;
     
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    const result = await query(
+    const result = await execute(
       `INSERT INTO users (username, email, phone, password_hash, role, status) 
        VALUES ($1, $2, $3, $4, $5, 'active') 
        RETURNING id, username, email, phone, role, status, created_at`,
@@ -29,7 +30,7 @@ class User {
 
   static async findByEmail(email) {
     const result = await query(
-      `SELECT * FROM users WHERE email = $1`,
+      `SELECT * FROM users WHERE LOWER(BTRIM(email)) = LOWER(BTRIM($1))`,
       [email]
     );
     return result.rows[0];

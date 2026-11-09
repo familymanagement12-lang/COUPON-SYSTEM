@@ -1,10 +1,13 @@
 const { Pool } = require('pg');
-require('dotenv').config();
+require('dotenv').config({ path: ['.env.local', '.env'] });
 
 // Database connection pool
 const ssl = process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false;
 const pool = new Pool(process.env.DATABASE_URL
-  ? { connectionString: process.env.DATABASE_URL, ssl }
+  ? {
+      connectionString: process.env.DATABASE_URL,
+      ...(process.env.DB_SSL === 'true' ? { ssl } : {}),
+    }
   : {
       user: process.env.DB_USER || 'postgres',
       host: process.env.DB_HOST || 'localhost',

@@ -9,8 +9,12 @@
 
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config();
-const { pool } = require('../src/config/database');
+require('dotenv').config({ path: ['.env.local', '.env'] });
+const { Pool } = require('pg');
+const database = require('../src/config/database');
+const pool = process.env.DATABASE_URL_UNPOOLED
+  ? new Pool({ connectionString: process.env.DATABASE_URL_UNPOOLED })
+  : database.pool;
 
 const initializeDatabase = async () => {
   try {
@@ -62,7 +66,7 @@ const checkConnection = async () => {
     return true;
   } catch (error) {
     console.error('❌ Database connection failed:', error.message);
-    console.error('Please check your .env file and PostgreSQL settings');
+    console.error('Please check your .env.local or .env file and PostgreSQL settings');
     process.exit(1);
   }
 };

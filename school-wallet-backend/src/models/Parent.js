@@ -1,10 +1,11 @@
 const { query } = require('../config/database');
 
 class Parent {
-  static async create(parentData) {
+  static async create(parentData, client) {
     const { userId, firstName, lastName, relationship } = parentData;
+    const execute = client ? client.query.bind(client) : query;
     
-    const result = await query(
+    const result = await execute(
       `INSERT INTO parents (user_id, first_name, last_name, relationship) 
        VALUES ($1, $2, $3, $4) 
        RETURNING id, user_id, first_name, last_name, relationship, created_at`,

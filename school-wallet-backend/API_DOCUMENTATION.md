@@ -28,7 +28,6 @@ The Authentication Module handles user registration, login, and token management
   "phone": "+233XXXXXXXXXX",
   "password": "SecurePassword123",
   "confirmPassword": "SecurePassword123",
-  "role": "parent",
   "firstName": "John",
   "lastName": "Doe"
 }
@@ -37,16 +36,19 @@ The Authentication Module handles user registration, login, and token management
 **Query Parameters**: None
 
 **Required Fields**:
-- `username` (string) - Unique username (3-255 characters)
+- `username` (string) - Unique username (3-32 letters, numbers, dots, underscores, or hyphens)
 - `email` (string) - Unique email address
-- `password` (string) - Minimum 8 characters
+- `password` (string) - Minimum 12 characters and no more than 72 UTF-8 bytes
 - `confirmPassword` (string) - Must match password
-- `role` (string) - One of: `admin`, `parent`, `student`, `vendor`
+- `firstName` and `lastName` (string) - Required for self-service parent accounts
 
 **Optional Fields**:
 - `phone` (string) - Phone number
-- `firstName` (string) - First name (required for parent/student)
-- `lastName` (string) - Last name (required for parent/student)
+
+Public registration always creates a parent account. A submitted `role` field is
+ignored; only the configured super administrator can create accounts with other
+roles. User and parent rows are inserted in one database transaction. Email
+addresses are unique case-insensitively after applying the versioned migration.
 
 **Success Response** (201 Created):
 ```json
@@ -71,13 +73,47 @@ The Authentication Module handles user registration, login, and token management
 
 **Error Responses**:
 - `400 Bad Request` - Missing fields or validation error
-- `400 Bad Request` - Email already registered
-- `400 Bad Request` - Username already taken
+- `409 Conflict` - Email already registered
+- `409 Conflict` - Username already taken
 - `500 Internal Server Error` - Server error
 
 ---
 
-### 2. User Login
+### 2. Forgot Password
+
+**Endpoint**: `POST /api/auth/forgot-password`
+
+**Request Body**:
+```json
+{ "identifier": "john@example.com" }
+```
+
+The identifier may be an email address or username. The API returns the same
+success response whether an account exists or not. In production, configure
+SMTP (`MAIL_HOST`, `MAIL_PORT`, `MAIL_FROM`, `MAIL_USER`, and `MAIL_PASSWORD`)
+and set `FRONTEND_URL` to the HTTPS frontend origin. Reset tokens are stored
+only as SHA-256 hashes, expire after 30 minutes, and are invalidated when a new
+reset request is created.
+
+### 3. Reset Password
+
+**Endpoint**: `POST /api/auth/reset-password`
+
+**Request Body**:
+```json
+{
+  "token": "<token-from-reset-email>",
+  "newPassword": "AnotherSecurePassword123",
+  "confirmPassword": "AnotherSecurePassword123"
+}
+```
+
+The token can be used once. A successful reset invalidates all outstanding
+reset links for that account.
+
+---
+
+### 4. User Login
 
 **Endpoint**: `POST /api/auth/login`
 
@@ -127,7 +163,7 @@ The Authentication Module handles user registration, login, and token management
 
 ---
 
-### 3. Refresh Access Token
+### 5. Refresh Access Token
 
 **Endpoint**: `POST /api/auth/refresh-token`
 
@@ -165,7 +201,7 @@ The Authentication Module handles user registration, login, and token management
 
 ---
 
-### 4. Logout
+### 6. Logout
 
 **Endpoint**: `POST /api/auth/logout`
 
@@ -194,7 +230,7 @@ Authorization: Bearer <access_token>
 
 ---
 
-### 5. Get Current User Profile
+### 7. Get Current User Profile
 
 **Endpoint**: `GET /api/auth/me`
 
@@ -248,7 +284,7 @@ Authorization: Bearer <access_token>
 
 ---
 
-### 6. Change Password
+### 8. Change Password
 
 **Endpoint**: `POST /api/auth/change-password`
 
@@ -270,7 +306,7 @@ Authorization: Bearer <access_token>
 
 **Required Fields**:
 - `currentPassword` (string) - Current password for verification
-- `newPassword` (string) - New password (minimum 8 characters)
+- `newPassword` (string) - New password (minimum 12 characters and no more than 72 UTF-8 bytes)
 - `confirmPassword` (string) - Must match newPassword
 
 **Success Response** (200 OK):
@@ -371,7 +407,7 @@ Content-Type: application/json
 ## Security Considerations
 
 1. **Password Requirements**:
-   - Minimum 8 characters
+   - Minimum 12 characters
    - Hashed using bcrypt with 10 salt rounds
    - Never transmitted in plain text
 
@@ -418,6 +454,7 @@ JWT_SECRET=
 JWT_EXPIRATION=7d
 REFRESH_TOKEN_EXPIRATION=30d
 DATABASE_URL=
+DATABASE_URL_UNPOOLED=
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=school_wallet_db
@@ -427,7 +464,9 @@ DB_SSL=false
 ```
 
 Set `JWT_SECRET` to a random value of at least 32 characters. Use either
-`DATABASE_URL` or the individual `DB_*` settings.
+`DATABASE_URL` or the individual `DB_*` settings. For Neon, the application
+uses the pooled `DATABASE_URL`; schema initialization uses
+`DATABASE_URL_UNPOOLED` when available.
 
 ---
 

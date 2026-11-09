@@ -1,0 +1,249 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const bcrypt = require('bcrypt');
+
+process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL = 'postgres://test:test@127.0.0.1:1/test';
+process.env.JWT_SECRET = 'test-only-secret-that-is-long-enough-123456';
+process.env.SUPER_ADMIN_EMAIL = 'admin@example.test';
+delete process.env.MAIL_HOST;
+delete process.env.MAIL_PORT;
+delete process.env.MAIL_USER;
+delete process.env.MAIL_PASSWORD;
+delete process.env.MAIL_FROM;
+
+const database = require('../src/config/database');
+const AuthController = require('../src/controllers/AuthController');
+
+let queryHandler = async () => ({ rows: [] });
+let clientHandler = async () => ({ query: async () => ({ rows: [] }), release() {} });
+database.pool.query = (...args) => queryHandler(...args);
+database.pool.connect = (...args) => clientHandler(...args);
+
+function response() {
+  return {
+    statusCode: 200,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(body) {
+      this.body = body;
+      return this;
+    }
+  };
+}
+
+function parentRegistration(body = {}) {
+  return {
+    username: 'jane.parent',
+    email: 'Jane.Parent@example.test',
+    phone: '+233201234567',
+    firstName: 'Jane',
+    lastName: 'Parent',
+    password: 'a-secure-password-123',
+    confirmPassword: 'a-secure-password-123',
+    ...body
+  };
+}
+
+test('public registration ignores requested privileged role and atomically creates a parent', async () => {
+  const statements = [];
+  queryHandler = async (sql) => {
+    if (/SELECT id FROM users WHERE LOWER\(BTRIM\(email\)\)/i.test(sql)) return { rows: [] };
+    if (/SELECT \* FROM users WHERE username/i.test(sql)) return { rows: [] };
+    throw new Error(`Unexpected database query: ${sql}`);
+  };
+  clientHandler = async () => ({
+    async query(sql, params = []) {
+      statements.push(sql);
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (/INSERT INTO users/i.test(sql)) {
+        return {
+          rows: [{
+            id: 21,
+            username: params[0],
+            email: params[1],
+            phone: params[2],
+            role: params[4],
+            status: 'active'
+          }]
+        };
+      }
+      if (/INSERT INTO parents/i.test(sql)) {
+        return { rows: [{ id: 31, user_id: params[0] }] };
+      }
+      throw new Error(`Unexpected transaction query: ${sql}`);
+    },
+    release() {}
+  });
+
+  const res = response();
+  await AuthController.register({ body: parentRegistration({ role: 'admin' }) }, res);
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.data.user.role, 'parent');
+  assert.equal(res.body.data.user.email, 'jane.parent@example.test');
+  assert.equal(res.body.data.user.parentId, 31);
+  assert.ok(res.body.data.tokens.accessToken);
+  assert.deepEqual(statements.slice(0, 1), ['BEGIN']);
+  assert.equal(statements.at(-1), 'COMMIT');
+  assert.equal(statements.some((sql) => /INSERT INTO parents/i.test(sql)), true);
+});
+
+test('registration rejects duplicate email and handles a concurrent unique-index conflict', async () => {
+  queryHandler = async (sql) => {
+    if (/SELECT id FROM users WHERE LOWER\(BTRIM\(email\)\)/i.test(sql)) return { rows: [{ id: 3 }] };
+    throw new Error(`Unexpected database query: ${sql}`);
+  };
+  let connectionRequested = false;
+  clientHandler = async () => {
+    connectionRequested = true;
+    throw new Error('No transaction should be opened for a known duplicate');
+  };
+
+  const duplicate = response();
+  await AuthController.register({ body: parentRegistration({ email: 'JANE.PARENT@EXAMPLE.TEST' }) }, duplicate);
+  assert.equal(duplicate.statusCode, 409);
+  assert.equal(connectionRequested, false);
+
+  queryHandler = async () => ({ rows: [] });
+  let rolledBack = false;
+  clientHandler = async () => ({
+    async query(sql) {
+      if (sql === 'ROLLBACK') rolledBack = true;
+      if (/INSERT INTO users/i.test(sql)) {
+        const error = new Error('unique violation');
+        error.code = '23505';
+        error.constraint = 'idx_users_email_lower';
+        throw error;
+      }
+      return { rows: [] };
+    },
+    release() {}
+  });
+  const concurrent = response();
+  await AuthController.register({ body: parentRegistration() }, concurrent);
+  assert.equal(concurrent.statusCode, 409);
+  assert.equal(concurrent.body.message, 'Email already registered');
+  assert.equal(rolledBack, true);
+});
+
+test('existing login accepts a registered parent account and verifies its bcrypt hash', async () => {
+  const password = 'a-secure-password-123';
+  const passwordHash = await bcrypt.hash(password, 10);
+  queryHandler = async (sql) => {
+    if (/SELECT \* FROM users WHERE LOWER\(BTRIM\(email\)\)/i.test(sql)) {
+      return {
+        rows: [{
+          id: 21,
+          username: 'jane.parent',
+          email: 'jane.parent@example.test',
+          phone: '+233201234567',
+          role: 'parent',
+          status: 'active',
+          password_hash: passwordHash
+        }]
+      };
+    }
+    if (/SELECT p\.\*/i.test(sql)) return { rows: [{ id: 31 }] };
+    if (/INSERT INTO audit_logs/i.test(sql)) return { rows: [] };
+    throw new Error(`Unexpected database query: ${sql}`);
+  };
+
+  const res = response();
+  await AuthController.login({
+    body: { identifier: 'JANE.PARENT@example.test', password },
+    ip: '127.0.0.1'
+  }, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.user.parentId, 31);
+  assert.ok(res.body.data.tokens.accessToken);
+});
+
+test('forgot-password creates a hashed token and reset consumes it only once', async () => {
+  const user = { id: 21, email: 'jane.parent@example.test', status: 'active' };
+  let storedTokenHash;
+  let used = false;
+  let updatedPasswordHash;
+  process.env.FRONTEND_URL = 'http://localhost:5173';
+  queryHandler = async (sql, params = []) => {
+    if (/SELECT id, email, status FROM users/i.test(sql)) return { rows: [user] };
+    if (/UPDATE password_reset_tokens SET used_at/i.test(sql)) {
+      if (used) return { rows: [] };
+      return { rows: [] };
+    }
+    if (/INSERT INTO password_reset_tokens/i.test(sql)) {
+      storedTokenHash = params[1];
+      return { rows: [] };
+    }
+    throw new Error(`Unexpected database query: ${sql}`);
+  };
+
+  const forgot = response();
+  await AuthController.forgotPassword({ body: { identifier: user.email } }, forgot);
+  assert.equal(forgot.statusCode, 200);
+  const resetUrl = new URL(forgot.body.data.resetUrl);
+  const rawToken = resetUrl.searchParams.get('token');
+  const crypto = require('node:crypto');
+  assert.equal(crypto.createHash('sha256').update(rawToken).digest('hex'), storedTokenHash);
+
+  clientHandler = async () => ({
+    async query(sql, params = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        if (sql === 'COMMIT') used = true;
+        return { rows: [] };
+      }
+      if (/SELECT id, user_id FROM password_reset_tokens/i.test(sql)) {
+        return used || params[0] !== storedTokenHash
+          ? { rows: [] }
+          : { rows: [{ id: 7, user_id: user.id }] };
+      }
+      if (/UPDATE users SET password_hash/i.test(sql)) {
+        updatedPasswordHash = params[0];
+        return { rows: [] };
+      }
+      if (/UPDATE password_reset_tokens SET used_at/i.test(sql)) return { rows: [] };
+      throw new Error(`Unexpected transaction query: ${sql}`);
+    },
+    release() {}
+  });
+
+  const reset = response();
+  await AuthController.resetPassword({
+    body: {
+      token: rawToken,
+      newPassword: 'another-secure-password-456',
+      confirmPassword: 'another-secure-password-456'
+    }
+  }, reset);
+  assert.equal(reset.statusCode, 200);
+  assert.equal(await bcrypt.compare('another-secure-password-456', updatedPasswordHash), true);
+
+  const reused = response();
+  await AuthController.resetPassword({
+    body: {
+      token: rawToken,
+      newPassword: 'third-secure-password-789',
+      confirmPassword: 'third-secure-password-789'
+    }
+  }, reused);
+  assert.equal(reused.statusCode, 400);
+});
+
+test('case-insensitive email migration is additive and versioned', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const migration = fs.readFileSync(
+    path.join(__dirname, '../migrations/001_case_insensitive_user_email.sql'),
+    'utf8'
+  );
+  assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower/i);
+  assert.match(migration, /LOWER\(BTRIM\(email\)\)/i);
+  assert.doesNotMatch(migration, /\b(DROP|DELETE|TRUNCATE)\b/i);
+});
+
+test.after(async () => {
+  await database.pool.end();
+});

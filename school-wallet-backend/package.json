@@ -6,15 +6,18 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "init-db": "node scripts/init-db.js",
+    "migrate": "node scripts/migrate.js",
     "create-super-admin": "node scripts/create-super-admin.js",
     "normalize-student-logins": "node scripts/normalize-student-logins.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@neon/config": "^1.13.0",
+    "@neon/env": "^2.1.0",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
@@ -22,6 +25,7 @@
     "helmet": "^8.2.0",
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.11.0",
+    "nodemailer": "^10.4.0",
     "pg": "^8.21.0",
     "qrcode": "^1.5.4",
     "socket.io": "^4.8.3"

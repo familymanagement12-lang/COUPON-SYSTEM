@@ -22,8 +22,8 @@ router.post('/register', optionalAuth, AuthController.register);
  * @body    {identifier (email/username), password}
  */
 router.post('/login', AuthController.login);
-router.post('/forgot-password', AuthController.forgotPassword);
-router.post('/reset-password', AuthController.resetPassword);
+router.post('/forgot-password', rateLimiter(15 * 60 * 1000, 5), AuthController.forgotPassword);
+router.post('/reset-password', rateLimiter(15 * 60 * 1000, 10), AuthController.resetPassword);
 
 /**
  * @route   POST /api/auth/refresh-token

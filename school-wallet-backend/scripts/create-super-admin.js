@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-require('dotenv').config();
+require('dotenv').config({ path: ['.env.local', '.env'] });
 const bcrypt = require('bcrypt');
 const { pool } = require('../src/config/database');
 

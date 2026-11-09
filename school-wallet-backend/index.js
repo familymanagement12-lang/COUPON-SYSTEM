@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
-require('dotenv').config();
+require('dotenv').config({ path: ['.env.local', '.env'] });
 
 const isProduction = process.env.NODE_ENV === 'production';
 const frontendOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')

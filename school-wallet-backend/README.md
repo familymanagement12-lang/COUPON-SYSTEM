@@ -55,10 +55,24 @@ Edit `.env` with your configuration:
 - Payment provider API keys
 - Email/SMS configuration
 
+For the linked Neon project, pull local Postgres settings with
+`neon env pull --services postgres --file .env.local`. The backend loads
+`.env.local` before `.env`; this local file is ignored by Git. The app uses
+Neon's pooled `DATABASE_URL`, while database initialization uses
+`DATABASE_URL_UNPOOLED` for direct connections.
+
 4. **Create the database schema**
 ```bash
 npm run init-db
+npm run migrate
 ```
+
+`npm run migrate` applies versioned, additive database changes in a transaction.
+It serializes concurrent migration runs and records each migration so it is safe
+to rerun. The email uniqueness migration preserves all rows and stops if
+existing email addresses normalize to the same value after trimming and
+lowercasing; review any reported
+duplicates manually before retrying.
 
 5. **Start development server**
 ```bash
@@ -78,16 +92,20 @@ The server will run on `http://localhost:3000`
    TLS, and a random `JWT_SECRET` of at least 32 characters.
 3. Set `FRONTEND_URL` to the deployed frontend's HTTPS origin. Set
    `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD` to the intended administrator
-   account; use these only as secrets in Render.
+   account; use these only as secrets in Render. Configure `MAIL_HOST`,
+   `MAIL_PORT`, `MAIL_SECURE`, `MAIL_USER`, `MAIL_PASSWORD`, and `MAIL_FROM`
+   with your SMTP provider to enable password reset emails. Do not put SMTP
+   credentials in frontend variables.
 4. Create a Static Site rooted at `school-wallet-frontend`, build with
    `npm install && npm run build`, publish `dist`, and set `VITE_API_URL` to
    `https://<backend-host>/api`. Set `VITE_SUPER_ADMIN_EMAIL` to the same value
    as `SUPER_ADMIN_EMAIL`. Add a rewrite from `/*` to `/index.html`.
    After the frontend URL is assigned, confirm it is set exactly in the
    backend's `FRONTEND_URL`.
-5. After setting the database environment, run `npm run init-db` once from the
-   backend service shell. Then run `npm run create-super-admin` once with the
-   intended administrator credentials.
+5. After setting the database environment, run `npm run init-db` and
+   `npm run migrate` from the backend service shell. Then run
+   `npm run create-super-admin` once with the intended administrator
+   credentials.
 6. Configure the payment provider's live credentials only after successful
    test-mode top-ups and reconciliation. Point its webhook to
    `https://<backend-host>/api/topups/webhook`.
@@ -194,7 +212,8 @@ Core tables (coming in migration scripts):
 
 ## 🧪 Testing
 
-Testing setup coming soon.
+Run `npm test` for backend authentication tests. They use isolated database
+stubs and do not create or alter production accounts.
 
 ## 📖 API Documentation
 

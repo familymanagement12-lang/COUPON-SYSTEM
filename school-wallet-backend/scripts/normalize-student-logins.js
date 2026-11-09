@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-require('dotenv').config();
+require('dotenv').config({ path: ['.env.local', '.env'] });
 const { pool } = require('../src/config/database');
 const STUDENT_EMAIL_DOMAIN = process.env.STUDENT_EMAIL_DOMAIN || 'mccarthyhillschool.edu.gh';
 
