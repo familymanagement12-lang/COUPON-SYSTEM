@@ -22,6 +22,12 @@ const isValidPassword = (password) => typeof password === 'string'
 const isValidEmail = (email) => email.length <= 255
   && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
+const normalizeLoginIdentifier = (identifier) => {
+  const value = typeof identifier === 'string' ? identifier.trim() : '';
+  const mailtoLink = value.match(/^\[([^\]]+)\]\(mailto:([^)]+)\)$/i);
+  return mailtoLink ? mailtoLink[2].trim() : value;
+};
+
 class AuthController {
   static async forgotPassword(req, res) {
     try {
@@ -263,7 +269,8 @@ class AuthController {
    */
   static async login(req, res) {
     try {
-      const { identifier, password } = req.body;
+      const { password } = req.body || {};
+      const identifier = normalizeLoginIdentifier(req.body?.identifier);
 
       if (!identifier || !password) {
         return ResponseHandler.badRequest(res, 'Email/Username and password are required');

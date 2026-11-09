@@ -153,7 +153,7 @@ test('existing login accepts a registered parent account and verifies its bcrypt
 
   const res = response();
   await AuthController.login({
-    body: { identifier: 'JANE.PARENT@example.test', password },
+    body: { identifier: '[JANE.PARENT@example.test](mailto:jane.parent@example.test)', password },
     ip: '127.0.0.1'
   }, res);
 
