@@ -60,6 +60,7 @@ const importStudents = async (req, res) => {
 
   const client = await getClient();
   const importedStudents = [];
+  const duplicates = [];
 
   try {
     await client.query('BEGIN');
@@ -68,54 +69,82 @@ const importStudents = async (req, res) => {
     for (const [index, student] of students.entries()) {
       const firstName = String(student.firstName || '').trim();
       const lastName = String(student.lastName || '').trim();
-      const studentId = String(student.studentId || await Student.generateStudentId(client)).trim();
 
       if (!firstName || !lastName) {
         throw new Error(`Row ${index + 1}: firstName and lastName are required.`);
       }
-      if (studentIds.has(studentId)) {
-        throw new Error(`Row ${index + 1}: duplicate studentId ${studentId}.`);
+
+      await client.query(`SAVEPOINT student_import_${index}`);
+      let studentId = '';
+      try {
+        studentId = String(student.studentId || await Student.generateStudentId(client)).trim();
+        if (studentIds.has(studentId)) {
+          await client.query(`ROLLBACK TO SAVEPOINT student_import_${index}`);
+          await client.query(`RELEASE SAVEPOINT student_import_${index}`);
+          duplicates.push({
+            row: index + 1,
+            studentId,
+            reason: 'Student ID is duplicated in this import.'
+          });
+          continue;
+        }
+        studentIds.add(studentId);
+
+        const memorableIdentity = createMemorableIdentity(firstName, lastName, studentId);
+        const username = String(student.username || memorableIdentity.username).trim().toLowerCase();
+        const email = String(student.email || memorableIdentity.email).trim().toLowerCase();
+        const temporaryPassword = student.password || createTemporaryPassword();
+        const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+        const userResult = await client.query(
+          `INSERT INTO users (username, email, password_hash, role, status)
+           VALUES ($1, $2, $3, 'student', 'active')
+           RETURNING id, username, email, role, status`,
+          [username, email, passwordHash]
+        );
+        const user = userResult.rows[0];
+        const qrCodeData = await QRCode.toDataURL(studentId);
+        const studentResult = await client.query(
+          `INSERT INTO students (user_id, student_id, first_name, last_name, class, date_of_birth, qr_code_data, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+           RETURNING id, student_id, first_name, last_name, class, date_of_birth, status`,
+          [user.id, studentId, firstName, lastName, student.className || student.class || null, student.dateOfBirth || null, qrCodeData]
+        );
+        const importedStudent = studentResult.rows[0];
+
+        await client.query(
+          `INSERT INTO wallets (student_id, balance, status)
+           VALUES ($1, 0, 'active')`,
+          [importedStudent.id]
+        );
+
+        importedStudents.push({
+          ...importedStudent,
+          username: user.username,
+          email: user.email,
+          temporaryPassword
+        });
+        await client.query(`RELEASE SAVEPOINT student_import_${index}`);
+      } catch (error) {
+        await client.query(`ROLLBACK TO SAVEPOINT student_import_${index}`);
+        await client.query(`RELEASE SAVEPOINT student_import_${index}`);
+        if (error.code !== '23505') throw error;
+
+        duplicates.push({
+          row: index + 1,
+          ...(studentId ? { studentId } : {}),
+          reason: 'Student ID, username, or email already exists.'
+        });
       }
-      studentIds.add(studentId);
-
-      const memorableIdentity = createMemorableIdentity(firstName, lastName, studentId);
-      const username = String(student.username || memorableIdentity.username).trim().toLowerCase();
-      const email = String(student.email || memorableIdentity.email).trim().toLowerCase();
-      const temporaryPassword = student.password || createTemporaryPassword();
-      const passwordHash = await bcrypt.hash(temporaryPassword, 10);
-      const userResult = await client.query(
-        `INSERT INTO users (username, email, password_hash, role, status)
-         VALUES ($1, $2, $3, 'student', 'active')
-         RETURNING id, username, email, role, status`,
-        [username, email, passwordHash]
-      );
-      const user = userResult.rows[0];
-      const qrCodeData = await QRCode.toDataURL(studentId);
-      const studentResult = await client.query(
-        `INSERT INTO students (user_id, student_id, first_name, last_name, class, date_of_birth, qr_code_data, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
-         RETURNING id, student_id, first_name, last_name, class, date_of_birth, status`,
-        [user.id, studentId, firstName, lastName, student.className || student.class || null, student.dateOfBirth || null, qrCodeData]
-      );
-      const importedStudent = studentResult.rows[0];
-
-      await client.query(
-        `INSERT INTO wallets (student_id, balance, status)
-         VALUES ($1, 0, 'active')`,
-        [importedStudent.id]
-      );
-
-      importedStudents.push({
-        ...importedStudent,
-        username: user.username,
-        email: user.email,
-        temporaryPassword
-      });
     }
 
     await client.query('COMMIT');
-    return ResponseHandler.created(res, 'Students imported successfully.', {
+    const message = duplicates.length
+      ? 'Students imported; duplicate rows were skipped.'
+      : 'Students imported successfully.';
+    return ResponseHandler.created(res, message, {
       count: importedStudents.length,
+      duplicateCount: duplicates.length,
+      duplicates,
       students: importedStudents
     });
   } catch (error) {

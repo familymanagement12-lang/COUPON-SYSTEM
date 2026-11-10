@@ -95,6 +95,16 @@ enforce the five-account cap. The database migration that adds the
 - `409 Conflict` - Username already taken
 - `500 Internal Server Error` - Server error
 
+### Student Bulk Import
+
+`POST /api/students/import` accepts up to 500 students per request. Each row
+requires `firstName` and `lastName`; missing student IDs are generated. Rows
+with an existing or repeated student ID, username, or email are skipped
+individually, while other valid rows in the batch are imported. The response
+includes `count`, `duplicateCount`, and `duplicates` with the original 1-based
+row number, student ID when available, and reason. Each row uses a database
+savepoint so a uniqueness conflict does not abort the rest of the batch.
+
 ---
 
 ### 2. Forgot Password

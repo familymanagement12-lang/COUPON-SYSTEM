@@ -234,6 +234,7 @@ export default function SuperAdmin() {
     setImportProgress(null)
     setLoading(true)
     let importedCount = 0
+    let duplicateRows = []
     let studentsToImport = []
     let nextOffset = 0
     let requestInFlight = false
@@ -241,11 +242,6 @@ export default function SuperAdmin() {
       const incompleteRow = students.findIndex(student => !student.firstName.trim() || !student.lastName.trim())
       if (incompleteRow !== -1) {
         throw new Error(`Complete the first name and last name on row ${incompleteRow + 1}.`)
-      }
-
-      const suppliedIds = students.map(student => student.studentId.trim()).filter(Boolean)
-      if (new Set(suppliedIds).size !== suppliedIds.length) {
-        throw new Error('Student IDs must be unique.')
       }
 
       studentsToImport = students.map(student => ({
@@ -259,13 +255,24 @@ export default function SuperAdmin() {
         requestInFlight = true
         const response = await api.post('/students/import', { students: batch }, { timeout: 45000 })
         importedCount += response.data.data.count
+        duplicateRows = duplicateRows.concat(
+          (response.data.data.duplicates || []).map(duplicate => ({
+            ...duplicate,
+            row: duplicate.row + offset
+          }))
+        )
         addImportedStudentsToDirectory(response.data.data.students)
         nextOffset = offset + batch.length
         requestInFlight = false
         setImportProgress({ imported: importedCount, total: studentsToImport.length })
       }
 
-      setStudentMessage(`${importedCount} student(s) onboarded successfully.`)
+      const duplicateSummary = duplicateRows.length
+        ? ` ${duplicateRows.length} duplicate row(s) skipped${duplicateRows.length <= 10
+          ? ` (rows ${duplicateRows.map(duplicate => duplicate.row).join(', ')}).`
+          : '.'}`
+        : ''
+      setStudentMessage(`${importedCount} student(s) onboarded successfully.${duplicateSummary}`)
       setStudents([{ ...emptyStudent }])
       await loadStudentDirectory()
       await loadWalletSnapshot()
@@ -277,7 +284,7 @@ export default function SuperAdmin() {
         setStudents(remainingStudents)
         setStudentMessage(outcomeMayBeUnknown
           ? `${importedCount} student(s) confirmed imported. The last batch timed out, so its result is unknown. Refresh the directory before retrying the remaining ${remainingStudents.length} row(s).`
-          : `${importedCount} student(s) imported. The next batch failed: ${requestError.response?.data?.message || requestError.message}. ${remainingStudents.length} row(s) remain in the form.`)
+          : `${importedCount} student(s) imported; ${duplicateRows.length} duplicate row(s) skipped. The next batch failed: ${requestError.response?.data?.message || requestError.message}. ${remainingStudents.length} row(s) remain in the form.`)
         await loadStudentDirectory()
       } else {
         setError(requestError.response?.data?.message || requestError.message)
