@@ -12,9 +12,11 @@ import Wallet from './pages/Wallet'
 import TopUp from './pages/TopUp'
 import VendorDashboard from './pages/VendorDashboard'
 import SuperAdmin from './pages/SuperAdmin'
+import StudentDirectory from './pages/StudentDirectory'
 import { AuthProvider } from './context/AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import SuperAdminRoute from './components/SuperAdminRoute'
+import AdminRoute from './components/AdminRoute'
 
 export default function App() {
   return (
@@ -33,6 +35,7 @@ export default function App() {
           <Route path="/purchase" element={<ProtectedRoute><Purchase/></ProtectedRoute>} />
           <Route path="/vendor" element={<ProtectedRoute><VendorDashboard/></ProtectedRoute>} />
           <Route path="/admin" element={<SuperAdminRoute><SuperAdmin/></SuperAdminRoute>} />
+          <Route path="/student-directory" element={<AdminRoute><StudentDirectory/></AdminRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

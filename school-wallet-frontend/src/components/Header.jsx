@@ -18,6 +18,7 @@ export default function Header(){
           {user ? (
             <>
               {isSuperAdmin && <Link to="/admin">Admin portal</Link>}
+              {(user.role === 'admin' || isSuperAdmin) && <Link to="/student-directory">Student directory</Link>}
               {user.role === 'vendor' ? <><Link to="/vendor">Overview</Link><Link to="/purchase">New sale</Link></> : <><Link to="/wallet">Wallets</Link><Link to="/topup">Top up</Link><Link to="/transactions">Transactions</Link></>}
               <span className="user-chip">{user.username || user.email}</span>
               <button className="logout-button" onClick={logout}>Sign out</button>

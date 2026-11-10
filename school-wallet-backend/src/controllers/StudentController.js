@@ -38,25 +38,71 @@ const listStudents = async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
-    const result = await query(
-      `SELECT s.id, s.student_id, s.first_name, s.last_name, s.class, s.date_of_birth, s.status,
-              u.username, u.email, w.balance, w.status AS wallet_status
-       FROM students s
-       JOIN users u ON s.user_id = u.id
-       LEFT JOIN wallets w ON w.student_id = s.id
-       ORDER BY s.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
-    );
+    const search = String(req.query.search || '').trim().slice(0, 100);
+    const searchPattern = `%${search}%`;
+    const [result, countResult] = await Promise.all([
+      query(
+        `SELECT s.id, s.student_id, s.first_name, s.last_name, s.class, s.date_of_birth, s.status,
+                u.username, u.email, w.balance, w.status AS wallet_status
+         FROM students s
+         JOIN users u ON s.user_id = u.id
+         LEFT JOIN wallets w ON w.student_id = s.id
+         WHERE $1 = ''
+            OR s.student_id ILIKE $2
+            OR s.first_name ILIKE $2
+            OR s.last_name ILIKE $2
+            OR CONCAT(s.first_name, ' ', s.last_name) ILIKE $2
+            OR s.class ILIKE $2
+            OR u.email ILIKE $2
+         ORDER BY s.created_at DESC
+         LIMIT $3 OFFSET $4`,
+        [search, searchPattern, limit, offset]
+      ),
+      query(
+        `SELECT COUNT(*)::int AS total_count
+         FROM students s
+         JOIN users u ON s.user_id = u.id
+         WHERE $1 = ''
+            OR s.student_id ILIKE $2
+            OR s.first_name ILIKE $2
+            OR s.last_name ILIKE $2
+            OR CONCAT(s.first_name, ' ', s.last_name) ILIKE $2
+            OR s.class ILIKE $2
+            OR u.email ILIKE $2`,
+        [search, searchPattern]
+      )
+    ]);
 
     return ResponseHandler.success(res, 'Students retrieved successfully.', {
       students: result.rows,
+      totalCount: countResult.rows[0].total_count,
+      search,
       limit,
       offset
     });
   } catch (error) {
     console.error('List students error:', error);
     return ResponseHandler.serverError(res, 'Failed to retrieve students.');
+  }
+};
+
+const lookupStudent = async (req, res) => {
+  const studentId = String(req.query.studentId || '').trim();
+  const normalizedStudentId = studentId.replace(/[^a-zA-Z0-9]/g, '');
+  if (normalizedStudentId.length < 3 || normalizedStudentId.length > 50) {
+    return ResponseHandler.badRequest(res, 'Provide a valid student ID.');
+  }
+
+  try {
+    const student = await Student.lookupByStudentId(studentId);
+    if (!student) {
+      return ResponseHandler.notFound(res, 'Student not found.');
+    }
+
+    return ResponseHandler.success(res, 'Student found.', { student });
+  } catch (error) {
+    console.error('Lookup student error:', error);
+    return ResponseHandler.serverError(res, 'Failed to look up student.');
   }
 };
 
@@ -195,4 +241,4 @@ const importStudents = async (req, res) => {
   }
 };
 
-module.exports = { importStudents, listStudents };
+module.exports = { importStudents, listStudents, lookupStudent };

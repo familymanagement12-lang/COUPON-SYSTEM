@@ -52,6 +52,7 @@ export default function SuperAdmin() {
   const [account, setAccount] = useState(emptyAccount)
   const [students, setStudents] = useState([{ ...emptyStudent }])
   const [studentDirectory, setStudentDirectory] = useState([])
+  const [directorySearch, setDirectorySearch] = useState('')
   const [walletSnapshot, setWalletSnapshot] = useState([])
   const [superAdmins, setSuperAdmins] = useState([])
   const [promotionEmail, setPromotionEmail] = useState('')
@@ -70,6 +71,11 @@ export default function SuperAdmin() {
       closed: summary.closed + (wallet.status === 'closed' ? 1 : 0)
     }
   }, { totalBalance: 0, active: 0, frozen: 0, closed: 0 })
+  const filteredStudentDirectory = studentDirectory.filter(student => (
+    `${student.student_id} ${student.first_name} ${student.last_name} ${student.class || ''} ${student.email || ''}`
+      .toLowerCase()
+      .includes(directorySearch.trim().toLowerCase())
+  ))
 
   async function loadWalletSnapshot() {
     try {
@@ -505,13 +511,17 @@ export default function SuperAdmin() {
           </div>
           <button className="secondary-button" type="button" onClick={loadStudentDirectory}>Refresh list</button>
         </div>
+        <div className="field directory-search">
+          <label htmlFor="adminStudentDirectorySearch">Search students</label>
+          <input id="adminStudentDirectorySearch" type="search" value={directorySearch} onChange={event => setDirectorySearch(event.target.value)} placeholder="Name, student ID, class, or email" />
+        </div>
         <div className="student-table-wrap">
           <table className="student-table">
             <thead>
               <tr><th>Unique ID</th><th>Name</th><th>Class</th><th>Email</th><th>Wallet</th><th>Status</th></tr>
             </thead>
             <tbody>
-              {studentDirectory.map(student => (
+              {filteredStudentDirectory.map(student => (
                 <tr key={student.id}>
                   <td><strong>{student.student_id}</strong></td>
                   <td>{student.first_name} {student.last_name}</td>
@@ -521,7 +531,7 @@ export default function SuperAdmin() {
                   <td>{student.status}</td>
                 </tr>
               ))}
-              {!studentDirectory.length && <tr><td colSpan="6">No students onboarded yet.</td></tr>}
+              {!filteredStudentDirectory.length && <tr><td colSpan="6">{directorySearch ? 'No students match this search.' : 'No students onboarded yet.'}</td></tr>}
             </tbody>
           </table>
         </div>

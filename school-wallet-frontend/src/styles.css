@@ -67,6 +67,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--teal);box-shadow:0 0 
 .compact-empty{padding:34px 20px}
 .student-directory{margin-top:20px}
 .directory-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.directory-search{max-width:520px;margin:18px 0}
+.directory-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;color:var(--muted);font-size:13px}
+.directory-pagination>div{display:flex;gap:8px}
+.student-lookup-result{color:#17634e;font-weight:700}
+.student-lookup-error{color:#ad1f1f}
 .section-note{margin:0 0 18px;color:#587083;line-height:1.5}
 .student-table-wrap{overflow-x:auto}
 .student-table{width:100%;min-width:760px;border-collapse:collapse}

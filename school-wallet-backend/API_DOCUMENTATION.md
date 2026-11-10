@@ -108,6 +108,18 @@ Rows matching an existing or earlier imported student by normalized first name,
 last name, and class are also skipped. The dashboard sends uploads in sequential
 batches of 100 to limit request duration; each API request accepts up to 500.
 
+### Student Directory and Vendor Lookup
+
+`GET /api/students` is available to admins and returns a paginated student
+directory. Use `search` to match student ID, first or last name, full name,
+class, or email. Responses include `totalCount` for pagination.
+
+`GET /api/students/lookup?studentId=STU1234567` is available to authenticated
+vendors. It returns only the matched student's ID, name, class, student status,
+and wallet status; it does not return the student's balance or account details.
+The vendor purchase form uses this lookup to show the student's name before
+allowing a sale.
+
 ### Super Administrator Transaction History
 
 `GET /api/transactions/all` returns all wallet transactions to an authenticated

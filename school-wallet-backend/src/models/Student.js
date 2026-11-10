@@ -57,6 +57,20 @@ class Student {
     return result.rows[0];
   }
 
+  static async lookupByStudentId(studentId) {
+    const normalizedStudentId = String(studentId || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    const result = await query(
+      `SELECT s.id, s.student_id, s.first_name, s.last_name, s.class, s.status,
+              w.status AS wallet_status
+       FROM students s
+       LEFT JOIN wallets w ON w.student_id = s.id
+       WHERE LOWER(REGEXP_REPLACE(s.student_id, '[^a-zA-Z0-9]', '', 'g')) = $1
+       LIMIT 1`,
+      [normalizedStudentId]
+    );
+    return result.rows[0];
+  }
+
   static async findByUserId(userId) {
     const result = await query(
       `SELECT s.*, u.email, u.phone, u.status as user_status 
