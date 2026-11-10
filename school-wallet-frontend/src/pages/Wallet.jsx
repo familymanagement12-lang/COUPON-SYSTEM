@@ -28,8 +28,14 @@ export default function Wallet(){
 
         const res = await api.get('/wallets/me')
         const walletData = res.data.data
-        const walletList = Array.isArray(walletData) ? walletData : walletData ? [walletData] : []
-        setWallet(walletData)
+        const walletList = Array.isArray(walletData)
+          ? walletData
+          : Array.isArray(walletData?.wallets)
+            ? walletData.wallets
+            : walletData
+              ? [walletData]
+              : []
+        setWallet(walletList)
 
         if (user?.role === 'parent' || user?.role === 'admin' || user?.role === 'super_admin') {
           const studentIds = walletList.map(getStudentInternalId).filter(Boolean)

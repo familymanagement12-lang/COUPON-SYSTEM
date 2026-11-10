@@ -5,6 +5,29 @@ const { query } = require('../config/database');
 const parseStudentIds = require('../utils/parseStudentIds');
 
 class TransactionController {
+  static async getAllHistory(req, res) {
+    try {
+      const limitValue = req.query.limit === undefined ? 100 : Number(req.query.limit);
+      const offsetValue = req.query.offset === undefined ? 0 : Number(req.query.offset);
+      if (!Number.isSafeInteger(limitValue) || limitValue < 1 || limitValue > 100
+        || !Number.isSafeInteger(offsetValue) || offsetValue < 0) {
+        return ResponseHandler.badRequest(res, 'limit must be 1-100 and offset must be a non-negative integer');
+      }
+
+      const { totalCount, transactions } = await Transaction.getAllWithDetails(limitValue, offsetValue);
+      return ResponseHandler.success(res, 'All transaction history', {
+        count: transactions.length,
+        totalCount,
+        limit: limitValue,
+        offset: offsetValue,
+        transactions
+      });
+    } catch (error) {
+      console.error('Get all transaction history error:', error);
+      return ResponseHandler.serverError(res, 'Failed to retrieve all transactions');
+    }
+  }
+
   static async getHistory(req, res) {
     try {
       const user = req.user;

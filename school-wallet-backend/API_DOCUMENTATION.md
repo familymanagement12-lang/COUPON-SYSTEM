@@ -108,6 +108,16 @@ Rows matching an existing or earlier imported student by normalized first name,
 last name, and class are also skipped. The dashboard sends uploads in sequential
 batches of 100 to limit request duration; each API request accepts up to 500.
 
+### Super Administrator Transaction History
+
+`GET /api/transactions/all` returns all wallet transactions to an authenticated
+super administrator. Results are ordered newest first and paginated with
+`limit` (1-100, default 100) and `offset` (default 0). Each transaction
+includes student name and ID, vendor name, transaction description, and
+purchase `items_description` when available. The response includes
+`totalCount` for pagination. Other roles must continue using the scoped
+`GET /api/transactions/history` endpoint.
+
 ---
 
 ### 2. Forgot Password

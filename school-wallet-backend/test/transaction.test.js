@@ -48,6 +48,57 @@ test('admin transaction history batches multiple students into one history query
   assert.equal(statements.length, 1);
 });
 
+test('super-admin transaction history returns paginated records with purchase and student details', async () => {
+  const statements = [];
+  queryHandler = async (sql, params = []) => {
+    statements.push({ sql, params });
+    if (/COUNT\(\*\).*wallet_transactions/i.test(sql)) {
+      return { rows: [{ total_count: 240 }] };
+    }
+    if (/FROM wallet_transactions wt/i.test(sql)) {
+      return {
+        rows: [{
+          id: 8,
+          student_id: 1,
+          student_code: 'STU0001',
+          first_name: 'Ama',
+          last_name: 'Mensah',
+          vendor_name: 'School Shop',
+          items_description: 'Lunch'
+        }]
+      };
+    }
+    throw new Error(`Unexpected database query: ${sql}`);
+  };
+
+  const res = response();
+  await TransactionController.getAllHistory({ query: { limit: '100', offset: '100' } }, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.count, 1);
+  assert.equal(res.body.data.totalCount, 240);
+  assert.equal(res.body.data.limit, 100);
+  assert.equal(res.body.data.offset, 100);
+  assert.equal(res.body.data.transactions[0].items_description, 'Lunch');
+  assert.equal(res.body.data.transactions[0].vendor_name, 'School Shop');
+  assert.match(statements.find(({ sql }) => /FROM wallet_transactions wt/i.test(sql)).sql, /LEFT JOIN purchases/);
+  assert.deepEqual(statements.find(({ sql }) => /FROM wallet_transactions wt/i.test(sql)).params, [100, 100]);
+});
+
+test('all transaction history rejects invalid pagination before querying the database', async () => {
+  let databaseQueried = false;
+  queryHandler = async () => {
+    databaseQueried = true;
+    return { rows: [] };
+  };
+
+  const res = response();
+  await TransactionController.getAllHistory({ query: { limit: '101', offset: '-1' } }, res);
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(databaseQueried, false);
+});
+
 test('parent batch history verifies every requested student before reading transactions', async () => {
   let historyRead = false;
   queryHandler = async (sql) => {

@@ -39,6 +39,30 @@ class Transaction {
     return result.rows;
   }
 
+  static async getAllWithDetails(limit = 100, offset = 0) {
+    const [countResult, transactionsResult] = await Promise.all([
+      query('SELECT COUNT(*)::int AS total_count FROM wallet_transactions'),
+      query(
+        `SELECT wt.id, wt.transaction_id, wt.wallet_id, wt.student_id, wt.parent_id,
+                wt.vendor_id, wt.type, wt.amount, wt.description, wt.status, wt.created_at,
+                s.student_id AS student_code, s.first_name, s.last_name,
+                v.vendor_name, p.items_description
+         FROM wallet_transactions wt
+         LEFT JOIN students s ON s.id = wt.student_id
+         LEFT JOIN vendors v ON v.id = wt.vendor_id
+         LEFT JOIN purchases p ON p.transaction_id = wt.id
+         ORDER BY wt.created_at DESC, wt.id DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      )
+    ]);
+
+    return {
+      totalCount: countResult.rows[0].total_count,
+      transactions: transactionsResult.rows
+    };
+  }
+
   static async getByWallet(walletId, limit = 50, offset = 0) {
     const sql = `SELECT * FROM wallet_transactions WHERE wallet_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`;
     const result = await query(sql, [walletId, limit, offset]);

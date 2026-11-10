@@ -1,20 +1,35 @@
 import React, { useContext, useEffect, useState } from 'react'
 import api from '../services/api'
 import { AuthContext } from '../context/AuthContext'
+import isSuperAdminUser from '../utils/isSuperAdmin'
 
 export default function Transactions(){
   const { user } = useContext(AuthContext)
   const [txs, setTxs] = useState([])
+  const [totalCount, setTotalCount] = useState(0)
+  const [offset, setOffset] = useState(0)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
   const [typeFilter, setTypeFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
   const [search, setSearch] = useState('')
+  const isSuperAdmin = isSuperAdminUser(user)
+  const pageSize = 100
 
   async function loadTransactions(){
     setLoading(true)
     setError(null)
     try{
+      if (isSuperAdmin) {
+        const response = await api.get('/transactions/all', {
+          params: { limit: pageSize, offset }
+        })
+        const data = response.data.data
+        setTxs(data.transactions || [])
+        setTotalCount(data.totalCount || 0)
+        return
+      }
+
       let studentIds = []
       const studentMeta = new Map()
       if (user?.role === 'parent') {
@@ -32,6 +47,7 @@ export default function Transactions(){
 
       if (!studentIds.length) {
         setTxs([])
+        setTotalCount(0)
         setError('No students linked')
         return
       }
@@ -45,6 +61,7 @@ export default function Transactions(){
       }))
       transactions.sort((left, right) => new Date(right.created_at) - new Date(left.created_at))
       setTxs(transactions)
+      setTotalCount(transactions.length)
     }catch(e){
       setError(e.response?.data?.message || e.message)
     }finally{
@@ -54,12 +71,12 @@ export default function Transactions(){
 
   useEffect(()=>{
     if (user) loadTransactions()
-  },[user])
+  },[user, offset])
 
   const filteredTransactions = txs.filter(transaction => {
     const matchesType = typeFilter === 'all' || transaction.type === typeFilter
     const matchesStatus = statusFilter === 'all' || transaction.status === statusFilter
-    const haystack = `${transaction.transaction_id || ''} ${transaction.student?.student_id || ''} ${transaction.description || ''}`.toLowerCase()
+    const haystack = `${transaction.transaction_id || ''} ${transaction.student_code || transaction.student?.student_id || ''} ${transaction.description || ''} ${transaction.items_description || ''} ${transaction.vendor_name || ''}`.toLowerCase()
     return matchesType && matchesStatus && haystack.includes(search.toLowerCase())
   })
   const totalCredits = filteredTransactions.reduce((sum, transaction) => {
@@ -76,15 +93,17 @@ export default function Transactions(){
         <div>
           <p className="eyebrow">Coupon activity</p>
           <h1>Transactions</h1>
-          <p className="lede">Track top-ups, purchases, refunds, and adjustments across linked student wallets.</p>
+          <p className="lede">{isSuperAdmin
+            ? 'Review all student wallet transactions, including purchase details and vendors.'
+            : 'Track top-ups, purchases, refunds, and adjustments across linked student wallets.'}</p>
         </div>
         <button className="secondary-button refresh-button" onClick={loadTransactions} disabled={loading}>{loading ? 'Loading...' : 'Refresh'}</button>
       </div>
 
       <div className="metric-grid transaction-metrics">
-        <div className="metric-card"><span>Records</span><strong>{txs.length}</strong><small>Across linked wallets</small></div>
-        <div className="metric-card metric-accent"><span>Completed</span><strong>{completedCount}</strong><small>Confirmed wallet activity</small></div>
-        <div className="metric-card"><span>Net movement</span><strong>GHS {netChange.toFixed(2)}</strong><small>Credits GHS {totalCredits.toFixed(2)} / Spent GHS {totalDebits.toFixed(2)}</small></div>
+        <div className="metric-card"><span>Records</span><strong>{isSuperAdmin ? totalCount : txs.length}</strong><small>{isSuperAdmin ? 'Across all student wallets' : 'Across linked wallets'}</small></div>
+        <div className="metric-card metric-accent"><span>Completed on this page</span><strong>{completedCount}</strong><small>Confirmed wallet activity</small></div>
+        <div className="metric-card"><span>Net movement on this page</span><strong>GHS {netChange.toFixed(2)}</strong><small>Credits GHS {totalCredits.toFixed(2)} / Spent GHS {totalDebits.toFixed(2)}</small></div>
       </div>
 
       <section className="surface transactions-surface">
@@ -99,10 +118,22 @@ export default function Transactions(){
         </div>
 
         {error && <p className="error">{error}</p>}
-        {loading ? <div className="empty-state"><strong>Loading transactions</strong><span>Checking each linked student wallet.</span></div> : !error && !filteredTransactions.length ? <div className="empty-state"><strong>No matching transactions</strong><span>New wallet activity will appear here automatically.</span></div> : <div className="transaction-list">{filteredTransactions.map(transaction => {
+        {loading ? <div className="empty-state"><strong>Loading transactions</strong><span>{isSuperAdmin ? 'Loading all student wallet activity.' : 'Checking each linked student wallet.'}</span></div> : !error && !filteredTransactions.length ? <div className="empty-state"><strong>No matching transactions</strong><span>New wallet activity will appear here automatically.</span></div> : <div className="transaction-list">{filteredTransactions.map(transaction => {
           const isCredit = transaction.type === 'topup' || transaction.type === 'refund' || transaction.type === 'adjustment'
-          return <article className="transaction-row" key={`${transaction.id}-${transaction.student_id}`}><div className={`transaction-icon ${isCredit ? 'credit' : 'debit'}`}>{isCredit ? '+' : '-'}</div><div className="transaction-main"><strong>{transaction.description || `${transaction.type} transaction`}</strong><span>{transaction.student?.student_id || `Student ${transaction.student_id}`} / {new Date(transaction.created_at).toLocaleString()}</span></div><div className="transaction-status"><span className={`status-pill status-${transaction.status}`}>{transaction.status}</span><strong className={isCredit ? 'amount-credit' : 'amount-debit'}>{isCredit ? '+' : '-'} GHS {Number(transaction.amount || 0).toFixed(2)}</strong></div></article>
+          const studentName = [transaction.first_name || transaction.student?.first_name, transaction.last_name || transaction.student?.last_name].filter(Boolean).join(' ')
+          const studentCode = transaction.student_code || transaction.student?.student_id
+          const usage = transaction.items_description || transaction.description || `${transaction.type} transaction`
+          return <article className="transaction-row" key={`${transaction.id}-${transaction.student_id}`}><div className={`transaction-icon ${isCredit ? 'credit' : 'debit'}`}>{isCredit ? '+' : '-'}</div><div className="transaction-main"><strong>{usage}</strong><span>{studentName ? `${studentName} · ` : ''}{studentCode || `Student ${transaction.student_id}`}{transaction.vendor_name ? ` · ${transaction.vendor_name}` : ''} / {new Date(transaction.created_at).toLocaleString()}</span></div><div className="transaction-status"><span className={`status-pill status-${transaction.status}`}>{transaction.status}</span><strong className={isCredit ? 'amount-credit' : 'amount-debit'}>{isCredit ? '+' : '-'} GHS {Number(transaction.amount || 0).toFixed(2)}</strong></div></article>
         })}</div>}
+        {isSuperAdmin && totalCount > pageSize && (
+          <div className="transaction-toolbar">
+            <span>Showing {offset + 1}-{Math.min(offset + txs.length, totalCount)} of {totalCount}</span>
+            <div className="transaction-filters">
+              <button className="secondary-button" type="button" onClick={() => setOffset(Math.max(offset - pageSize, 0))} disabled={loading || offset === 0}>Previous</button>
+              <button className="secondary-button" type="button" onClick={() => setOffset(offset + pageSize)} disabled={loading || offset + pageSize >= totalCount}>Next</button>
+            </div>
+          </div>
+        )}
       </section>
     </main>
   )
