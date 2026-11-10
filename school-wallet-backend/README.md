@@ -58,7 +58,8 @@ Edit `.env` with your configuration:
 For the linked Neon project, pull local Postgres settings with
 `neon env pull --services postgres --file .env.local`. The backend loads
 `.env.local` before `.env`; this local file is ignored by Git. The app uses
-Neon's pooled `DATABASE_URL`, while database initialization uses
+Neon's pooled `DATABASE_URL`, falling back to `DATABASE_URL_UNPOOLED` when the
+pooled URL is not configured. Database initialization and migrations prefer
 `DATABASE_URL_UNPOOLED` for direct connections.
 
 4. **Create the database schema**
@@ -95,9 +96,11 @@ The server will run on `http://localhost:3000`
    `school-wallet-backend`. Use `npm install` as the build command and
    `npm start` as the start command; set the health check path to
    `/api/health`.
-2. Set `NODE_ENV=production`, `DATABASE_URL` to the database's internal
-   connection string, `DB_SSL=false` unless your database connection requires
-   TLS, and a random `JWT_SECRET` of at least 32 characters.
+2. Set `NODE_ENV=production`, `DATABASE_URL` to the database's pooled
+   connection string, and `DATABASE_URL_UNPOOLED` to its direct connection
+   string when available. The runtime can use the direct URL if the pooled
+   variable is absent. Set `DB_SSL=false` unless your database connection
+   requires TLS, and use a random `JWT_SECRET` of at least 32 characters.
 3. Set `FRONTEND_URL` to the deployed frontend's HTTPS origin. Set
    `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD` to the intended administrator
    account; use these only as secrets in Render. Configure `MAIL_HOST`,

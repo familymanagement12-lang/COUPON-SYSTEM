@@ -4,27 +4,32 @@ const { performance } = require('perf_hooks');
 const { getRequestId } = require('../utils/requestContext');
 require('dotenv').config({ path: ['.env.local', '.env'] });
 
-const ssl = process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false;
-const pool = new Pool(process.env.DATABASE_URL
-  ? {
-      connectionString: process.env.DATABASE_URL,
-      ...(process.env.DB_SSL === 'true' ? { ssl } : {}),
+const databasePoolConfig = (env = process.env) => {
+  const connectionString = env.DATABASE_URL || env.DATABASE_URL_UNPOOLED;
+  const connectionSsl = env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false;
+
+  return connectionString
+    ? {
+      connectionString,
+      ...(env.DB_SSL === 'true' ? { ssl: connectionSsl } : {}),
       max: 10,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
     }
-  : {
-      user: process.env.DB_USER || 'postgres',
-      host: process.env.DB_HOST || 'localhost',
-      database: process.env.DB_NAME || 'school_wallet_db',
-      password: process.env.DB_PASSWORD,
-      port: Number(process.env.DB_PORT || 5432),
-      ssl,
+    : {
+      user: env.DB_USER || 'postgres',
+      host: env.DB_HOST || 'localhost',
+      database: env.DB_NAME || 'school_wallet_db',
+      password: env.DB_PASSWORD,
+      port: Number(env.DB_PORT || 5432),
+      ssl: connectionSsl,
       max: 10,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
-    });
+    };
+};
 
+const pool = new Pool(databasePoolConfig());
 pool.on('error', (err) => {
   console.error('Unexpected error on idle database client:', err.message);
 });
@@ -119,4 +124,4 @@ const getClient = async () => {
   return client;
 };
 
-module.exports = { pool, query, getClient };
+module.exports = { pool, query, getClient, databasePoolConfig };

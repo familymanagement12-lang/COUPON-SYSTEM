@@ -181,7 +181,7 @@ export default function SuperAdmin() {
   }
 
   function downloadTemplate() {
-    const blob = new Blob(['studentId,firstName,lastName,className,dateOfBirth\n, Ama, Mensah, JHS 1,\n'], { type: 'text/csv;charset=utf-8' })
+    const blob = new Blob(['studentId,lastName,firstName,className,dateOfBirth\n,Mensah,Ama,JHS 1,\n'], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -264,7 +264,11 @@ export default function SuperAdmin() {
         addImportedStudentsToDirectory(response.data.data.students)
         nextOffset = offset + batch.length
         requestInFlight = false
-        setImportProgress({ imported: importedCount, total: studentsToImport.length })
+        setImportProgress({
+          imported: importedCount,
+          total: studentsToImport.length,
+          duplicates: duplicateRows.length
+        })
       }
 
       const duplicateSummary = duplicateRows.length
@@ -446,7 +450,7 @@ export default function SuperAdmin() {
 
         <section className="admin-section">
           <h2>Onboard students</h2>
-          <p className="section-note">Only first and last name are required. Student ID is generated when blank; class and date of birth are optional.</p>
+          <p className="section-note">Only first and last name are required. CSV columns are matched by header, so Last Name can come before First Name. Student ID is generated when blank; class and date of birth are optional.</p>
           <form className="auth-form" onSubmit={importStudents}>
             <div className="upload-actions">
               <label className="file-button" htmlFor="studentCsv">Upload CSV</label>
@@ -484,7 +488,7 @@ export default function SuperAdmin() {
             {importProgress && loading && (
               <p role="status">
                 Imported {importProgress.imported} of {importProgress.total} students
-                {duplicateRows.length ? `; skipped ${duplicateRows.length} duplicates` : ''}...
+                {importProgress.duplicates ? `; skipped ${importProgress.duplicates} duplicates` : ''}...
               </p>
             )}
           </form>

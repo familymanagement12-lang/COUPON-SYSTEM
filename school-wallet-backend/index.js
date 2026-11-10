@@ -14,13 +14,13 @@ const frontendOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
 if (isProduction) {
   const missing = [];
   if (!process.env.FRONTEND_URL) missing.push('FRONTEND_URL');
-  if (!process.env.DATABASE_URL && !(
+  if (!process.env.DATABASE_URL && !process.env.DATABASE_URL_UNPOOLED && !(
     process.env.DB_HOST &&
     process.env.DB_NAME &&
     process.env.DB_USER &&
     process.env.DB_PASSWORD
   )) {
-    missing.push('DATABASE_URL (or DB_HOST, DB_NAME, DB_USER, and DB_PASSWORD)');
+    missing.push('DATABASE_URL, DATABASE_URL_UNPOOLED, or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD');
   }
   if (frontendOrigins.some(origin => {
     try {
