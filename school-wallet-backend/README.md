@@ -74,6 +74,14 @@ existing email addresses normalize to the same value after trimming and
 lowercasing; review any reported
 duplicates manually before retrying.
 
+The backend runs this same migration runner before opening its HTTP listener.
+It prefers `DATABASE_URL_UNPOOLED` for migrations and falls back to
+`DATABASE_URL` (including Neon's pooled URL) or the `DB_*` connection settings.
+Each migration and its tracking record commit together; a failed migration is
+rolled back and prevents the server from starting. The transaction-scoped
+PostgreSQL advisory lock serializes startup and manual migration runs across
+multiple backend instances.
+
 5. **Start development server**
 ```bash
 npm run dev
@@ -102,13 +110,16 @@ The server will run on `http://localhost:3000`
    as `SUPER_ADMIN_EMAIL`. Add a rewrite from `/*` to `/index.html`.
    After the frontend URL is assigned, confirm it is set exactly in the
    backend's `FRONTEND_URL`.
-5. After setting the database environment, run `npm run init-db` and
-   `npm run migrate` from the backend service shell. Then run
-   `npm run create-super-admin` once with the intended administrator
-   credentials. The configured `SUPER_ADMIN_EMAIL` is the bootstrap
-   super-admin; it can create up to four additional super-admin accounts from
-   the admin portal. Additional accounts use their own email and password and
-   do not require individual Render environment variables.
+5. On each backend start, pending versioned migrations are applied before
+   `/api/health` or other routes can accept requests. No Render Shell step is
+   needed for these migrations. For a new empty database, initialize the base
+   schema with `npm run init-db` before the first deployment; keep
+   `npm run migrate` available for manual, repeatable migration runs. The
+   configured `SUPER_ADMIN_EMAIL` remains the bootstrap super-admin; the
+   migrations do not create accounts, change passwords, or alter administrator
+   permissions. The bootstrap admin can create up to four additional super
+   admins from the portal, using their own email and password without
+   individual Render environment variables.
 6. Configure the payment provider's live credentials only after successful
    test-mode top-ups and reconciliation. Point its webhook to
    `https://<backend-host>/api/topups/webhook`.

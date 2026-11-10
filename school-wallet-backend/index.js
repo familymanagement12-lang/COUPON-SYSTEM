@@ -39,6 +39,11 @@ if (isProduction) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 const db = require('./src/config/database');
+const {
+  createMigrationPool,
+  runMigrations,
+  sanitizeErrorMessage
+} = require('./src/config/migrations');
 
 app.set('db', db);
 
@@ -135,13 +140,51 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start Server
-app.listen(PORT, () => {
-  console.log(`🚀 McCarthy Hill School Coupon System Backend running on port ${PORT}`);
-  console.log(`📝 Environment: ${process.env.NODE_ENV}`);
-  console.log(`🔗 API: http://localhost:${PORT}/api`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`📚 Auth endpoints: http://localhost:${PORT}/api/auth`);
-});
+async function startServer({
+  serverApp = app,
+  port = PORT,
+  migrationPool = createMigrationPool(),
+  migrationRunner = runMigrations,
+  logger = console
+} = {}) {
+  let startupError;
+  try {
+    await migrationRunner(migrationPool);
+  } catch (error) {
+    startupError = error;
+  }
 
+  try {
+    await migrationPool.end();
+  } catch (error) {
+    if (!startupError) {
+      startupError = error;
+    } else {
+      logger.error(`[startup] migration pool shutdown failed: ${sanitizeErrorMessage(error)}`);
+    }
+  }
+
+  if (startupError) {
+    logger.error('[startup] migrations failed; HTTP server will not start.');
+    throw startupError;
+  }
+
+  const server = serverApp.listen(port, () => {
+    console.log(`🚀 McCarthy Hill School Coupon System Backend running on port ${port}`);
+    console.log(`📝 Environment: ${process.env.NODE_ENV}`);
+    console.log(`🔗 API: http://localhost:${port}/api`);
+    console.log(`🔗 Health check: http://localhost:${port}/api/health`);
+    console.log(`📚 Auth endpoints: http://localhost:${port}/api/auth`);
+  });
+  return server;
+}
+
+app.startServer = startServer;
 module.exports = app;
+
+if (require.main === module) {
+  startServer().catch(error => {
+    console.error(`[startup] backend startup aborted: ${sanitizeErrorMessage(error)}`);
+    process.exitCode = 1;
+  });
+}
