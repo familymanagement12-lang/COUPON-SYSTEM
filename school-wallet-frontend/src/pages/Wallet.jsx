@@ -2,6 +2,7 @@ import React, { useContext, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import api from '../services/api'
 import { AuthContext } from '../context/AuthContext'
+import loadAllAdminWallets from '../utils/loadAllAdminWallets'
 
 function getStudentInternalId(wallet) {
   const candidate = wallet?.student_internal_id ?? wallet?.student_id
@@ -26,8 +27,9 @@ export default function Wallet(){
           sessionStorage.removeItem('walletMessage')
         }
 
-        const res = await api.get('/wallets/me')
-        const walletData = res.data.data
+        const walletData = user?.role === 'admin' || user?.role === 'super_admin'
+          ? await loadAllAdminWallets()
+          : (await api.get('/wallets/me')).data.data
         const walletList = Array.isArray(walletData)
           ? walletData
           : Array.isArray(walletData?.wallets)
@@ -37,17 +39,30 @@ export default function Wallet(){
               : []
         setWallet(walletList)
 
-        if (user?.role === 'parent' || user?.role === 'admin' || user?.role === 'super_admin') {
+        if (user?.role === 'parent') {
           const studentIds = walletList.map(getStudentInternalId).filter(Boolean)
-          if (studentIds.length) {
+          for (let index = 0; index < studentIds.length; index += 100) {
             const limitResponse = await api.get('/spending/batch', {
-              params: { studentIds: studentIds.join(',') }
+              params: { studentIds: studentIds.slice(index, index + 100).join(',') }
             })
-            setLimits(Object.fromEntries(
-              limitResponse.data.data.limits.map(limit => [limit.student_id, limit])
-            ))
-          } else if (walletList.length) {
+            setLimits(current => ({
+              ...current,
+              ...Object.fromEntries(limitResponse.data.data.limits.map(limit => [limit.student_id, limit]))
+            }))
+          }
+          if (studentIds.length === 0 && walletList.length) {
             setError('Could not load spending limits because wallet data did not include valid student IDs. Refresh the page or contact support.')
+          }
+        } else if ((user?.role === 'admin' || user?.role === 'super_admin') && walletList.length) {
+          const studentIds = walletList.map(getStudentInternalId).filter(Boolean)
+          for (let index = 0; index < studentIds.length; index += 100) {
+            const limitResponse = await api.get('/spending/batch', {
+              params: { studentIds: studentIds.slice(index, index + 100).join(',') }
+            })
+            setLimits(current => ({
+              ...current,
+              ...Object.fromEntries(limitResponse.data.data.limits.map(limit => [limit.student_id, limit]))
+            }))
           }
         }
       }catch(e){

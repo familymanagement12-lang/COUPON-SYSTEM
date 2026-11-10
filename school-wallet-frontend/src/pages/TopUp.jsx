@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import api from '../services/api'
+import { AuthContext } from '../context/AuthContext'
+import loadAllAdminWallets from '../utils/loadAllAdminWallets'
 
 export default function TopUp(){
+  const { user } = React.useContext(AuthContext)
   const navigate = useNavigate()
   const [methods, setMethods] = useState([])
   const [amount, setAmount] = useState('')
@@ -18,9 +21,16 @@ export default function TopUp(){
   const selectedMethod = methods.find(item => item.provider === method)
 
   async function loadWallets() {
-    const walletResponse = await api.get('/wallets/me')
-    const walletData = walletResponse.data.data
-    const studentWallets = Array.isArray(walletData) ? walletData : walletData ? [walletData] : []
+    const walletData = user?.role === 'admin' || user?.role === 'super_admin'
+      ? await loadAllAdminWallets()
+      : (await api.get('/wallets/me')).data.data
+    const studentWallets = Array.isArray(walletData)
+      ? walletData
+      : Array.isArray(walletData?.wallets)
+        ? walletData.wallets
+        : walletData
+          ? [walletData]
+          : []
     setWallets(studentWallets)
     if (!studentId && studentWallets[0]) setStudentId(studentWallets[0].student_internal_id)
     return studentWallets

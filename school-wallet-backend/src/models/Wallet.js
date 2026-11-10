@@ -259,6 +259,11 @@ class Wallet {
     );
     return result.rows;
   }
+
+  static async countAllWallets() {
+    const result = await query('SELECT COUNT(*)::int AS total_count FROM wallets');
+    return result.rows[0].total_count;
+  }
 }
 
 module.exports = Wallet;

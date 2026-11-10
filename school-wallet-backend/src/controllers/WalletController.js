@@ -205,13 +205,21 @@ class WalletController {
    */
   static async getAllWallets(req, res) {
     try {
-      const limit = Math.min(parseInt(req.query.limit) || 50, 100);
-      const offset = parseInt(req.query.offset) || 0;
+      const limit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+      const offset = req.query.offset === undefined ? 0 : Number(req.query.offset);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100
+        || !Number.isSafeInteger(offset) || offset < 0) {
+        return ResponseHandler.badRequest(res, 'limit must be 1-100 and offset must be a non-negative integer');
+      }
 
-      const wallets = await Wallet.getAllWallets(limit, offset);
+      const [wallets, totalCount] = await Promise.all([
+        Wallet.getAllWallets(limit, offset),
+        Wallet.countAllWallets()
+      ]);
 
       return ResponseHandler.success(res, 'Wallets retrieved', {
         count: wallets.length,
+        totalCount,
         limit,
         offset,
         wallets

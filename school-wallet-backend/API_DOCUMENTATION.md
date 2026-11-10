@@ -120,6 +120,10 @@ and wallet status; it does not return the student's balance or account details.
 The vendor purchase form uses this lookup to show the student's name before
 allowing a sale.
 
+Admin wallet listings accept `limit` (1-100) and `offset` query parameters and
+include `totalCount`. The Super Admin wallet screen loads all pages so the
+display is not limited to the API's default first 50 records.
+
 Parents can link multiple children in one `POST /api/parents/me/students`
 request by passing a `students` array of `{ studentIdentifier, lastName }`
 objects. The response includes per-row results so invalid or unverified entries

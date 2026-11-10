@@ -1,6 +1,7 @@
 import React, { useContext, useEffect, useState } from 'react'
 import api from '../services/api'
 import { AuthContext } from '../context/AuthContext'
+import loadAllAdminWallets from '../utils/loadAllAdminWallets'
 
 export default function Dashboard(){
   const { user } = useContext(AuthContext)
@@ -19,8 +20,14 @@ export default function Dashboard(){
           const children = await api.get('/parents/me/students')
           setStudents(children.data.data.students || [])
         } else {
-          const res = await api.get('/wallets/me')
-          setWallet(res.data.data)
+          const wallets = user?.role === 'admin' || user?.role === 'super_admin'
+            ? await loadAllAdminWallets()
+            : (await api.get('/wallets/me')).data.data
+          setWallet(user?.role === 'admin' || user?.role === 'super_admin' ? {
+            ...wallets,
+            count: wallets.totalCount,
+            wallets: wallets.wallets
+          } : wallets)
         }
       }catch(e){
         console.error(e)
@@ -136,7 +143,7 @@ export default function Dashboard(){
             <div className="metric-card metric-accent">
               <span>Total wallets</span>
               <strong>{wallet.count || adminWallets.length}</strong>
-              <small>Wallets currently loaded</small>
+              <small>Across all student wallets</small>
             </div>
             <div className="metric-card">
               <span>Total balance</span>
