@@ -106,6 +106,7 @@ const getTransactions = async (req, res) => {
         // to fetch a comprehensive list of transactions for the vendor.
         const getTransactionsQuery = `
             SELECT
+                wt.id,
                 wt.transaction_id,
                 p.amount,
                 wt.type,
