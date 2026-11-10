@@ -21,6 +21,19 @@ const createMemorableIdentity = (firstName, lastName, studentId) => {
   };
 };
 
+const normalizeDuplicateField = value => String(value || '')
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .trim()
+  .replace(/\s+/g, ' ')
+  .toLowerCase();
+
+const createStudentDuplicateKey = (firstName, lastName, className) => [
+  firstName,
+  lastName,
+  className
+].map(normalizeDuplicateField).join('\u0000');
+
 const listStudents = async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
@@ -64,14 +77,37 @@ const importStudents = async (req, res) => {
 
   try {
     await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [73402913]);
+
+    const existingStudents = await client.query(
+      'SELECT first_name, last_name, class FROM students'
+    );
+    const studentNameClasses = new Set(
+      existingStudents.rows.map(student => createStudentDuplicateKey(
+        student.first_name,
+        student.last_name,
+        student.class
+      ))
+    );
 
     const studentIds = new Set();
     for (const [index, student] of students.entries()) {
       const firstName = String(student.firstName || '').trim();
       const lastName = String(student.lastName || '').trim();
+      const className = String(student.className || student.class || '').trim();
 
       if (!firstName || !lastName) {
         throw new Error(`Row ${index + 1}: firstName and lastName are required.`);
+      }
+
+      const duplicateKey = createStudentDuplicateKey(firstName, lastName, className);
+      if (studentNameClasses.has(duplicateKey)) {
+        duplicates.push({
+          row: index + 1,
+          ...(student.studentId ? { studentId: String(student.studentId).trim() } : {}),
+          reason: 'A student with the same first name, last name, and class already exists.'
+        });
+        continue;
       }
 
       await client.query(`SAVEPOINT student_import_${index}`);
@@ -107,7 +143,7 @@ const importStudents = async (req, res) => {
           `INSERT INTO students (user_id, student_id, first_name, last_name, class, date_of_birth, qr_code_data, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
            RETURNING id, student_id, first_name, last_name, class, date_of_birth, status`,
-          [user.id, studentId, firstName, lastName, student.className || student.class || null, student.dateOfBirth || null, qrCodeData]
+          [user.id, studentId, firstName, lastName, className || null, student.dateOfBirth || null, qrCodeData]
         );
         const importedStudent = studentResult.rows[0];
 
@@ -123,6 +159,7 @@ const importStudents = async (req, res) => {
           email: user.email,
           temporaryPassword
         });
+        studentNameClasses.add(duplicateKey);
         await client.query(`RELEASE SAVEPOINT student_import_${index}`);
       } catch (error) {
         await client.query(`ROLLBACK TO SAVEPOINT student_import_${index}`);

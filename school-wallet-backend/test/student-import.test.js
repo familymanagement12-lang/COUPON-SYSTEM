@@ -28,12 +28,17 @@ function response() {
   };
 }
 
-function createImportClient({ existingStudentIds = [], existingEmails = [] } = {}) {
+function createImportClient({
+  existingStudentIds = [],
+  existingEmails = [],
+  existingStudentRecords = []
+} = {}) {
   const studentIds = new Set(existingStudentIds);
   const emails = new Set(existingEmails);
   const usernames = new Set();
   const users = [];
   const importedRows = [];
+  const studentRecords = existingStudentRecords.map(student => ({ ...student }));
   const savepoints = new Map();
   let transactionSnapshot;
   let nextUserId = 1;
@@ -51,6 +56,7 @@ function createImportClient({ existingStudentIds = [], existingEmails = [] } = {
           usernames: new Set(usernames),
           usersLength: users.length,
           importedRowsLength: importedRows.length,
+          studentRecordsLength: studentRecords.length,
           nextUserId,
           nextStudentId
         };
@@ -66,10 +72,12 @@ function createImportClient({ existingStudentIds = [], existingEmails = [] } = {
         transactionSnapshot.usernames.forEach(value => usernames.add(value));
         users.length = transactionSnapshot.usersLength;
         importedRows.length = transactionSnapshot.importedRowsLength;
+        studentRecords.length = transactionSnapshot.studentRecordsLength;
         nextUserId = transactionSnapshot.nextUserId;
         nextStudentId = transactionSnapshot.nextStudentId;
         return { rows: [] };
       }
+      if (/pg_advisory_xact_lock/i.test(sql)) return { rows: [] };
       const savepointMatch = sql.match(/^SAVEPOINT (student_import_\d+)$/);
       if (savepointMatch) {
         savepoints.set(savepointMatch[1], {
@@ -78,6 +86,7 @@ function createImportClient({ existingStudentIds = [], existingEmails = [] } = {
           usernames: new Set(usernames),
           usersLength: users.length,
           importedRowsLength: importedRows.length,
+          studentRecordsLength: studentRecords.length,
           nextUserId,
           nextStudentId
         });
@@ -95,6 +104,7 @@ function createImportClient({ existingStudentIds = [], existingEmails = [] } = {
         snapshot.usernames.forEach(value => usernames.add(value));
         users.length = snapshot.usersLength;
         importedRows.length = snapshot.importedRowsLength;
+        studentRecords.length = snapshot.studentRecordsLength;
         nextUserId = snapshot.nextUserId;
         nextStudentId = snapshot.nextStudentId;
         return { rows: [] };
@@ -104,6 +114,10 @@ function createImportClient({ existingStudentIds = [], existingEmails = [] } = {
       if (releaseMatch) {
         savepoints.delete(releaseMatch[1]);
         return { rows: [] };
+      }
+
+      if (/^SELECT first_name, last_name, class FROM students$/i.test(sql)) {
+        return { rows: studentRecords };
       }
 
       if (/INSERT INTO users/i.test(sql)) {
@@ -146,6 +160,7 @@ function createImportClient({ existingStudentIds = [], existingEmails = [] } = {
           status: 'active'
         };
         importedRows.push(student);
+        studentRecords.push(student);
         return { rows: [student] };
       }
 
@@ -161,7 +176,12 @@ function createImportClient({ existingStudentIds = [], existingEmails = [] } = {
 test('bulk import skips duplicate IDs and emails while committing the remaining rows', async () => {
   const databaseState = createImportClient({
     existingStudentIds: ['STU-DUPLICATE'],
-    existingEmails: ['already-used@example.test']
+    existingEmails: ['already-used@example.test'],
+    existingStudentRecords: [{
+      first_name: 'Existing',
+      last_name: 'Student',
+      class: 'Class A'
+    }]
   });
   clientFactory = async () => databaseState.client;
 
@@ -172,22 +192,52 @@ test('bulk import skips duplicate IDs and emails while committing the remaining 
         { studentId: 'STU-ONE', firstName: 'Ama', lastName: 'Mensah' },
         { studentId: 'STU-DUPLICATE', firstName: 'Kofi', lastName: 'Owusu' },
         { studentId: 'STU-THREE', firstName: 'Esi', lastName: 'Boateng', email: 'already-used@example.test' },
-        { studentId: 'STU-FOUR', firstName: 'Yaw', lastName: 'Asare' }
+        { studentId: 'STU-FOUR', firstName: 'Yaw', lastName: 'Asare' },
+        { studentId: 'STU-FIVE', firstName: 'Existing', lastName: 'Student', className: ' Class  A ' }
       ]
     }
   }, res);
 
   assert.equal(res.statusCode, 201);
   assert.equal(res.body.data.count, 2);
-  assert.equal(res.body.data.duplicateCount, 2);
+  assert.equal(res.body.data.duplicateCount, 3);
   assert.deepEqual(res.body.data.duplicates.map(({ row, studentId }) => ({ row, studentId })), [
     { row: 2, studentId: 'STU-DUPLICATE' },
-    { row: 3, studentId: 'STU-THREE' }
+    { row: 3, studentId: 'STU-THREE' },
+    { row: 5, studentId: 'STU-FIVE' }
   ]);
   assert.deepEqual(res.body.data.students.map(student => student.student_id), ['STU-ONE', 'STU-FOUR']);
   assert.equal(databaseState.users.length, 2);
   assert.equal(databaseState.statements.at(-1), 'COMMIT');
   assert.equal(databaseState.statements.filter(sql => /^ROLLBACK TO SAVEPOINT/.test(sql)).length, 2);
+});
+
+test('bulk import skips same-name same-class rows but allows matching names in another class', async () => {
+  const databaseState = createImportClient({
+    existingStudentRecords: [{
+      first_name: 'Ama',
+      last_name: 'Mensah',
+      class: 'JHS 1'
+    }]
+  });
+  clientFactory = async () => databaseState.client;
+
+  const res = response();
+  await StudentController.importStudents({
+    body: {
+      students: [
+        { studentId: 'STU-DUPLICATE', firstName: ' ama ', lastName: 'MENSAH', className: 'JHS   1' },
+        { studentId: 'STU-VALID', firstName: 'Ama', lastName: 'Mensah', className: 'JHS 2' }
+      ]
+    }
+  }, res);
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.data.count, 1);
+  assert.equal(res.body.data.duplicateCount, 1);
+  assert.equal(res.body.data.duplicates[0].reason,
+    'A student with the same first name, last name, and class already exists.');
+  assert.deepEqual(res.body.data.students.map(student => student.student_id), ['STU-VALID']);
 });
 
 test('bulk import skips repeated IDs inside the same file and imports other rows', async () => {

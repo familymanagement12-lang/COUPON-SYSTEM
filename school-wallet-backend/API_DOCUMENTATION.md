@@ -104,6 +104,9 @@ individually, while other valid rows in the batch are imported. The response
 includes `count`, `duplicateCount`, and `duplicates` with the original 1-based
 row number, student ID when available, and reason. Each row uses a database
 savepoint so a uniqueness conflict does not abort the rest of the batch.
+Rows matching an existing or earlier imported student by normalized first name,
+last name, and class are also skipped. The dashboard sends uploads in sequential
+batches of 100 to limit request duration; each API request accepts up to 500.
 
 ---
 

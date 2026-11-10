@@ -248,7 +248,7 @@ export default function SuperAdmin() {
         ...student,
         studentId: student.studentId.trim() || undefined
       }))
-      const batchSize = 20
+      const batchSize = 100
       for (let offset = 0; offset < studentsToImport.length; offset += batchSize) {
         const batch = studentsToImport.slice(offset, offset + batchSize)
         nextOffset = offset
@@ -482,7 +482,10 @@ export default function SuperAdmin() {
             <button className="secondary-button" type="button" onClick={addStudentRow}>Add student row</button>
             <button type="submit" disabled={loading}>{loading ? 'Importing students...' : 'Import students'}</button>
             {importProgress && loading && (
-              <p role="status">Imported {importProgress.imported} of {importProgress.total} students...</p>
+              <p role="status">
+                Imported {importProgress.imported} of {importProgress.total} students
+                {duplicateRows.length ? `; skipped ${duplicateRows.length} duplicates` : ''}...
+              </p>
             )}
           </form>
           {studentMessage && <p className="success" role="status">{studentMessage}</p>}
