@@ -43,14 +43,14 @@ class Transaction {
     const [countResult, transactionsResult] = await Promise.all([
       query('SELECT COUNT(*)::int AS total_count FROM wallet_transactions'),
       query(
-        `SELECT wt.id, wt.transaction_id, wt.wallet_id, wt.student_id, wt.parent_id,
-                wt.vendor_id, wt.type, wt.amount, wt.description, wt.status, wt.created_at,
+        `SELECT wt.id, wt.transaction_id, wt.wallet_id, wt.student_id,
+                wt.type, wt.amount, wt.description, wt.status, wt.created_at,
                 s.student_id AS student_code, s.first_name, s.last_name,
                 v.vendor_name, p.items_description
          FROM wallet_transactions wt
          LEFT JOIN students s ON s.id = wt.student_id
-         LEFT JOIN vendors v ON v.id = wt.vendor_id
          LEFT JOIN purchases p ON p.transaction_id = wt.id
+         LEFT JOIN vendors v ON v.id = p.vendor_id
          ORDER BY wt.created_at DESC, wt.id DESC
          LIMIT $1 OFFSET $2`,
         [limit, offset]

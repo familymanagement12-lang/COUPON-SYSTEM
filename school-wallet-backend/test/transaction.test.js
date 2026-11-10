@@ -81,8 +81,11 @@ test('super-admin transaction history returns paginated records with purchase an
   assert.equal(res.body.data.offset, 100);
   assert.equal(res.body.data.transactions[0].items_description, 'Lunch');
   assert.equal(res.body.data.transactions[0].vendor_name, 'School Shop');
-  assert.match(statements.find(({ sql }) => /FROM wallet_transactions wt/i.test(sql)).sql, /LEFT JOIN purchases/);
-  assert.deepEqual(statements.find(({ sql }) => /FROM wallet_transactions wt/i.test(sql)).params, [100, 100]);
+  const historyQuery = statements.find(({ sql }) => /FROM wallet_transactions wt/i.test(sql));
+  assert.match(historyQuery.sql, /LEFT JOIN purchases p ON p\.transaction_id = wt\.id/);
+  assert.match(historyQuery.sql, /LEFT JOIN vendors v ON v\.id = p\.vendor_id/);
+  assert.doesNotMatch(historyQuery.sql, /wt\.(?:parent_id|vendor_id)/);
+  assert.deepEqual(historyQuery.params, [100, 100]);
 });
 
 test('all transaction history rejects invalid pagination before querying the database', async () => {
