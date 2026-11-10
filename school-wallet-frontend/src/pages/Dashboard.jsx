@@ -6,8 +6,7 @@ export default function Dashboard(){
   const { user } = useContext(AuthContext)
   const [wallet, setWallet] = useState(null)
   const [students, setStudents] = useState([])
-  const [studentIdentifier, setStudentIdentifier] = useState('')
-  const [lastName, setLastName] = useState('')
+  const [studentLinks, setStudentLinks] = useState([{ studentIdentifier: '', lastName: '' }])
   const [linkError, setLinkError] = useState(null)
   const [linkMessage, setLinkMessage] = useState(null)
 
@@ -34,18 +33,44 @@ export default function Dashboard(){
     e.preventDefault()
     setLinkError(null)
     setLinkMessage(null)
+    const requestedStudents = studentLinks
+      .map(student => ({
+        studentIdentifier: student.studentIdentifier.trim(),
+        lastName: student.lastName.trim()
+      }))
+      .filter(student => student.studentIdentifier || student.lastName)
+
+    if (!requestedStudents.length || requestedStudents.some(student => !student.studentIdentifier || !student.lastName)) {
+      setLinkError('Enter both the student ID and surname or full name for each child.')
+      return
+    }
+
     try {
-      const response = await api.post('/parents/me/students', { studentIdentifier: studentIdentifier.trim(), lastName: lastName.trim() })
-      const linkedStudent = response.data.data.student
-      setStudents(current => current.some(student => student.id === linkedStudent.id)
-        ? current
-        : [...current, linkedStudent])
-      setStudentIdentifier('')
-      setLastName('')
-      setLinkMessage('Student linked successfully.')
+      const response = await api.post('/parents/me/students', { students: requestedStudents })
+      const { linkedCount, results } = response.data.data
+      const linkedStudents = response.data.data.students || []
+      setStudents(current => {
+        const byId = new Map(current.map(student => [student.id, student]))
+        linkedStudents.forEach(student => byId.set(student.id, student))
+        return [...byId.values()]
+      })
+      const failures = (results || []).filter(result => result.status !== 'linked')
+      setStudentLinks(failures.map(result => {
+        const requested = requestedStudents[result.row - 1]
+        return requested || { studentIdentifier: '', lastName: '' }
+      }))
+      if (!failures.length) setStudentLinks([{ studentIdentifier: '', lastName: '' }])
+      setLinkMessage(`${linkedCount} child${linkedCount === 1 ? '' : 'ren'} linked successfully.${failures.length ? ` ${failures.length} row(s) need attention.` : ''}`)
+      if (failures.length) setLinkError(failures.map(result => `Row ${result.row}: ${result.message}`).join(' '))
     } catch (e) {
       setLinkError(e.response?.data?.message || e.message)
     }
+  }
+
+  function updateStudentLink(index, field, value) {
+    setStudentLinks(current => current.map((student, studentIndex) => (
+      studentIndex === index ? { ...student, [field]: value } : student
+    )))
   }
 
   const adminWallets = wallet?.wallets || []
@@ -69,18 +94,35 @@ export default function Dashboard(){
       </div>
       {user?.role === 'parent' ? (
         <>
-          <h3>Link a student</h3>
-          <form onSubmit={linkStudent}>
-            <input placeholder="Student ID" value={studentIdentifier} onChange={e => setStudentIdentifier(e.target.value)} required />
-            <input placeholder="Student surname or full name" value={lastName} onChange={e => setLastName(e.target.value)} required />
-            <button type="submit">Link student</button>
-          </form>
-          {linkError && <p className="error">{linkError}</p>}
-          {linkMessage && <p>{linkMessage}</p>}
-          <h3>Linked students</h3>
+          <section className="admin-section parent-children-section">
+            <h2>Add your children</h2>
+            <p className="section-note">Add one or more children using each student's ID and surname or full name.</p>
+            <form className="auth-form" onSubmit={linkStudent}>
+              {studentLinks.map((student, index) => (
+                <div className="form-grid parent-child-row" key={index}>
+                  <div className="field">
+                    <label htmlFor={`childStudentId-${index}`}>Student ID</label>
+                    <input id={`childStudentId-${index}`} placeholder="Student ID" value={student.studentIdentifier} onChange={e => updateStudentLink(index, 'studentIdentifier', e.target.value)} required />
+                  </div>
+                  <div className="field">
+                    <label htmlFor={`childLastName-${index}`}>Surname or full name</label>
+                    <input id={`childLastName-${index}`} placeholder="Surname or full name" value={student.lastName} onChange={e => updateStudentLink(index, 'lastName', e.target.value)} required />
+                  </div>
+                  {studentLinks.length > 1 && <button className="remove-row parent-child-remove" type="button" onClick={() => setStudentLinks(current => current.filter((_, studentIndex) => studentIndex !== index))}>Remove</button>}
+                </div>
+              ))}
+              <div className="upload-actions">
+                <button className="secondary-button" type="button" onClick={() => setStudentLinks(current => [...current, { studentIdentifier: '', lastName: '' }])}>Add another child</button>
+                <button type="submit">Link children</button>
+              </div>
+            </form>
+            {linkError && <p className="error">{linkError}</p>}
+            {linkMessage && <p className="success">{linkMessage}</p>}
+          </section>
+          <h3>Linked children ({students.length})</h3>
           {students.length ? students.map(student => (
             <p key={student.id || student.student_id}>{student.student_id} - {student.first_name || ''} {student.last_name}</p>
-          )) : <p>No students linked yet.</p>}
+          )) : <p>No children linked yet.</p>}
         </>
       ) : wallet && (user?.role === 'admin' || user?.role === 'super_admin') ? (
         <section className="admin-section wallet-overview">

@@ -120,6 +120,12 @@ and wallet status; it does not return the student's balance or account details.
 The vendor purchase form uses this lookup to show the student's name before
 allowing a sale.
 
+Parents can link multiple children in one `POST /api/parents/me/students`
+request by passing a `students` array of `{ studentIdentifier, lastName }`
+objects. The response includes per-row results so invalid or unverified entries
+do not block other children from being linked. The original single-student
+request body remains supported.
+
 ### Super Administrator Transaction History
 
 `GET /api/transactions/all` returns all wallet transactions to an authenticated
