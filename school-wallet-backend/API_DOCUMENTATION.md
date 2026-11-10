@@ -50,6 +50,24 @@ ignored; only the configured super administrator can create accounts with other
 roles. User and parent rows are inserted in one database transaction. Email
 addresses are unique case-insensitively after applying the versioned migration.
 
+### Super Administrator Management
+
+The configured bootstrap super administrator can manage up to five
+super-administrator accounts total from the protected admin portal. Additional
+accounts have their own email and password and are stored with the
+`super_admin` role; they do not need per-account Render environment variables.
+
+- `GET /api/auth/super-admins` - List super-administrator accounts
+- `POST /api/auth/super-admins` - Create a super-administrator account
+- `POST /api/auth/super-admins/promote` - Promote an existing active admin account by email
+
+These endpoints require an authenticated super administrator. The create
+request requires `username`, `email`, `password`, and `confirmPassword`; the
+password must be at least 12 characters. Promotion requires an existing active
+admin account's email and preserves its current password. Both operations
+enforce the five-account cap. The database migration that adds the
+`super_admin` role must be applied before using these endpoints.
+
 **Success Response** (201 Created):
 ```json
 {

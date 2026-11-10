@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(255) UNIQUE,
   phone VARCHAR(20),
   password_hash VARCHAR(255) NOT NULL,
-  role VARCHAR(50) NOT NULL CHECK(role IN ('admin', 'parent', 'student', 'vendor')),
+  role VARCHAR(50) NOT NULL CHECK(role IN ('admin', 'super_admin', 'parent', 'student', 'vendor')),
   status VARCHAR(50) DEFAULT 'active' CHECK(status IN ('active', 'inactive', 'suspended', 'deleted')),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

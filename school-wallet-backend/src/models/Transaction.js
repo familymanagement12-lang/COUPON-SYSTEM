@@ -24,6 +24,21 @@ class Transaction {
     return result.rows;
   }
 
+  static async getLatestByStudents(studentIds, limit = 50) {
+    const sql = `SELECT transactions.*
+      FROM UNNEST($1::int[]) AS requested(student_id)
+      CROSS JOIN LATERAL (
+        SELECT *
+        FROM wallet_transactions
+        WHERE student_id = requested.student_id
+        ORDER BY created_at DESC
+        LIMIT $2
+      ) AS transactions
+      ORDER BY transactions.created_at DESC`;
+    const result = await query(sql, [studentIds, limit]);
+    return result.rows;
+  }
+
   static async getByWallet(walletId, limit = 50, offset = 0) {
     const sql = `SELECT * FROM wallet_transactions WHERE wallet_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`;
     const result = await query(sql, [walletId, limit, offset]);

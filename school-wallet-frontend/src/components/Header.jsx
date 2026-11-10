@@ -2,12 +2,11 @@ import React, { useContext } from 'react'
 import { Link } from 'react-router-dom'
 import { AuthContext } from '../context/AuthContext'
 import schoolLogo from '../public/cropped-transparent-logo-1.png'
-
-const SUPER_ADMIN_EMAIL = (import.meta.env.VITE_SUPER_ADMIN_EMAIL || '').trim().toLowerCase()
+import isSuperAdminUser from '../utils/isSuperAdmin'
 
 export default function Header(){
   const { user, logout } = useContext(AuthContext)
-  const isSuperAdmin = user?.role === 'admin' && user.email?.toLowerCase() === SUPER_ADMIN_EMAIL
+  const isSuperAdmin = isSuperAdminUser(user)
   return (
     <header className="app-header">
       <div className="header-inner">

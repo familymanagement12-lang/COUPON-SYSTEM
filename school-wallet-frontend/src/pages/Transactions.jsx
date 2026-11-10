@@ -36,8 +36,10 @@ export default function Transactions(){
         return
       }
 
-      const responses = await Promise.all(studentIds.map(studentId => api.get(`/transactions/history?studentId=${studentId}`)))
-      const transactions = responses.flatMap(response => response.data.data.transactions || []).map(transaction => ({
+      const response = await api.get('/transactions/history', {
+        params: { studentIds: studentIds.join(',') }
+      })
+      const transactions = (response.data.data.transactions || []).map(transaction => ({
         ...transaction,
         student: studentMeta.get(transaction.student_id)
       }))

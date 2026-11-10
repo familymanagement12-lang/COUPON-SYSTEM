@@ -1,6 +1,6 @@
 const express = require('express');
 const AuthController = require('../controllers/AuthController');
-const { authenticateToken, optionalAuth, rateLimiter } = require('../middleware/auth');
+const { authenticateToken, authorizeSuperAdmin, optionalAuth, rateLimiter } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -14,6 +14,9 @@ router.use(rateLimiter(15 * 60 * 1000, 100));
  * @body    {username, email, phone, password, confirmPassword, role, firstName, lastName}
  */
 router.post('/register', optionalAuth, AuthController.register);
+router.get('/super-admins', authenticateToken, authorizeSuperAdmin, AuthController.listSuperAdmins);
+router.post('/super-admins', authenticateToken, authorizeSuperAdmin, AuthController.createSuperAdmin);
+router.post('/super-admins/promote', authenticateToken, authorizeSuperAdmin, AuthController.promoteSuperAdmin);
 
 /**
  * @route   POST /api/auth/login

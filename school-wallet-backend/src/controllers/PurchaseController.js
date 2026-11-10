@@ -1,6 +1,7 @@
 const { getClient } = require('../config/database');
 const SpendingControlService = require('../services/SpendingControlService');
 const logger = require('../utils/logger');
+const { isAdmin } = require('../middleware/auth');
 
 /**
  * @desc    Process a purchase from a student's wallet
@@ -11,7 +12,7 @@ const processPurchase = async (req, res) => {
     const { studentIdentifier, itemsDescription } = req.body;
     const purchaseAmount = Number.parseFloat(req.body.amount);
     const requestedVendorId = Number.parseInt(req.body.vendorId, 10);
-    const vendorId = req.user.role === 'admin' ? requestedVendorId : req.user.vendorId;
+    const vendorId = isAdmin(req.user) ? requestedVendorId : req.user.vendorId;
     const processingUserId = req.user.id;
 
     if (!Number.isInteger(vendorId) || vendorId <= 0) {

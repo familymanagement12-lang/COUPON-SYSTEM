@@ -264,6 +264,190 @@ class AuthController {
     }
   }
 
+  static async listSuperAdmins(req, res) {
+    try {
+      const bootstrapEmail = (process.env.SUPER_ADMIN_EMAIL || '').trim().toLowerCase();
+      const result = await query(
+        `SELECT id, username, email,
+                CASE WHEN role = 'super_admin'
+                       OR (role = 'admin' AND LOWER(BTRIM(email)) = $1)
+                     THEN 'super_admin' ELSE role END AS role,
+                status, created_at
+         FROM users
+         WHERE status <> 'deleted'
+           AND (role = 'super_admin' OR (role = 'admin' AND LOWER(BTRIM(email)) = $1))
+         ORDER BY created_at, id`,
+        [bootstrapEmail]
+      );
+      return ResponseHandler.success(res, 'Super administrators retrieved', {
+        count: result.rows.length,
+        maxCount: 5,
+        users: result.rows
+      });
+    } catch (error) {
+      console.error('List super administrators error:', error.message);
+      return ResponseHandler.serverError(res, 'Unable to list super administrators');
+    }
+  }
+
+  static async createSuperAdmin(req, res) {
+    let client;
+    try {
+      const body = req.body || {};
+      const username = typeof body.username === 'string' ? body.username.trim() : '';
+      const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+      const phone = typeof body.phone === 'string' ? body.phone.trim() : '';
+      const { password, confirmPassword } = body;
+
+      if (!username || !email || !password || !confirmPassword) {
+        return ResponseHandler.badRequest(res, 'Username, email, password, and password confirmation are required');
+      }
+      if (username.length < 3 || username.length > 32 || !/^[a-zA-Z0-9._-]+$/.test(username)) {
+        return ResponseHandler.badRequest(res, 'Username must be 3-32 characters using letters, numbers, dots, underscores, or hyphens');
+      }
+      if (!isValidEmail(email)) return ResponseHandler.badRequest(res, 'Enter a valid email address');
+      if (phone && (phone.length > 20 || !/^\+?[0-9][0-9\s().-]{4,19}$/.test(phone))) {
+        return ResponseHandler.badRequest(res, 'Enter a valid phone number');
+      }
+      if (password !== confirmPassword) return ResponseHandler.badRequest(res, 'Passwords do not match');
+      if (!isValidPassword(password)) {
+        return ResponseHandler.badRequest(res, `Password must be at least ${PASSWORD_MIN_LENGTH} characters and no more than ${PASSWORD_MAX_BYTES} UTF-8 bytes`);
+      }
+
+      client = await getClient();
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [73402912]);
+
+      const bootstrapEmail = (process.env.SUPER_ADMIN_EMAIL || '').trim().toLowerCase();
+      const countResult = await client.query(
+        `SELECT COUNT(*)::int AS count
+         FROM users
+         WHERE status <> 'deleted'
+           AND (role = 'super_admin' OR (role = 'admin' AND LOWER(BTRIM(email)) = $1))`,
+        [bootstrapEmail]
+      );
+      if (countResult.rows[0].count >= 5) {
+        await client.query('ROLLBACK');
+        return ResponseHandler.error(res, 'The system is limited to five super administrators', 409);
+      }
+
+      const user = await User.create({
+        username,
+        email,
+        phone: phone || null,
+        password,
+        role: 'super_admin'
+      }, client);
+      await client.query(
+        `INSERT INTO audit_logs (user_id, action, entity_type, entity_id, new_value, ip_address)
+         VALUES ($1, 'super_admin_created', 'users', $2, $3, $4)`,
+        [req.user.id, user.id, JSON.stringify({ email: user.email }), req.ip || 'unknown']
+      );
+      await client.query('COMMIT');
+
+      return ResponseHandler.created(res, 'Super administrator created', {
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+          status: user.status,
+          created_at: user.created_at
+        }
+      });
+    } catch (error) {
+      if (client) await client.query('ROLLBACK').catch(() => {});
+      if (error.code === '23505') {
+        const constraint = error.constraint || '';
+        const message = /email/i.test(constraint)
+          ? 'Email already registered'
+          : /username/i.test(constraint)
+            ? 'Username already taken'
+            : 'An account with these details already exists';
+        return ResponseHandler.error(res, message, 409);
+      }
+      console.error('Create super administrator error:', error.message);
+      return ResponseHandler.serverError(res, 'Unable to create super administrator');
+    } finally {
+      client?.release();
+    }
+  }
+
+  static async promoteSuperAdmin(req, res) {
+    let client;
+    try {
+      const email = typeof req.body?.email === 'string'
+        ? req.body.email.trim().toLowerCase()
+        : '';
+      if (!isValidEmail(email)) return ResponseHandler.badRequest(res, 'Enter a valid email address');
+
+      client = await getClient();
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [73402912]);
+
+      const accountResult = await client.query(
+        `SELECT id, username, email, role, status, created_at
+         FROM users
+         WHERE LOWER(BTRIM(email)) = $1
+         FOR UPDATE`,
+        [email]
+      );
+      const account = accountResult.rows[0];
+      if (!account) {
+        await client.query('ROLLBACK');
+        return ResponseHandler.notFound(res, 'No existing account was found for this email');
+      }
+
+      const bootstrapEmail = (process.env.SUPER_ADMIN_EMAIL || '').trim().toLowerCase();
+      if (account.role === 'super_admin'
+          || (account.role === 'admin' && account.email.trim().toLowerCase() === bootstrapEmail)) {
+        await client.query('ROLLBACK');
+        return ResponseHandler.error(res, 'This account is already a super administrator', 409);
+      }
+      if (account.role !== 'admin' || account.status !== 'active') {
+        await client.query('ROLLBACK');
+        return ResponseHandler.error(res, 'Only active admin accounts can be promoted', 409);
+      }
+
+      const countResult = await client.query(
+        `SELECT COUNT(*)::int AS count
+         FROM users
+         WHERE status <> 'deleted'
+           AND (role = 'super_admin' OR (role = 'admin' AND LOWER(BTRIM(email)) = $1))`,
+        [bootstrapEmail]
+      );
+      if (countResult.rows[0].count >= 5) {
+        await client.query('ROLLBACK');
+        return ResponseHandler.error(res, 'The system is limited to five super administrators', 409);
+      }
+
+      const updateResult = await client.query(
+        `UPDATE users
+         SET role = 'super_admin', updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1
+         RETURNING id, username, email, role, status, created_at`,
+        [account.id]
+      );
+      await client.query(
+        `INSERT INTO audit_logs (user_id, action, entity_type, entity_id, new_value, ip_address)
+         VALUES ($1, 'super_admin_promoted', 'users', $2, $3, $4)`,
+        [req.user.id, account.id, JSON.stringify({ email: account.email }), req.ip || 'unknown']
+      );
+      await client.query('COMMIT');
+
+      return ResponseHandler.updated(res, 'Existing administrator promoted to super administrator', {
+        user: updateResult.rows[0]
+      });
+    } catch (error) {
+      if (client) await client.query('ROLLBACK').catch(() => {});
+      console.error('Promote super administrator error:', error.message);
+      return ResponseHandler.serverError(res, 'Unable to promote administrator');
+    } finally {
+      client?.release();
+    }
+  }
+
   /**
    * User Login
    */

@@ -3,6 +3,12 @@ import { Link } from 'react-router-dom'
 import api from '../services/api'
 import { AuthContext } from '../context/AuthContext'
 
+function getStudentInternalId(wallet) {
+  const candidate = wallet?.student_internal_id ?? wallet?.student_id
+  const studentId = Number(candidate)
+  return Number.isSafeInteger(studentId) && studentId > 0 ? studentId : null
+}
+
 export default function Wallet(){
   const { user } = useContext(AuthContext)
   const [wallet, setWallet] = useState(null)
@@ -25,17 +31,18 @@ export default function Wallet(){
         const walletList = Array.isArray(walletData) ? walletData : walletData ? [walletData] : []
         setWallet(walletData)
 
-        if (user?.role === 'parent' || user?.role === 'admin') {
-          const limitEntries = await Promise.all(walletList.map(async item => {
-            const studentInternalId = item.student_internal_id || item.student_id
-            try {
-              const limitResponse = await api.get(`/spending/${studentInternalId}`)
-              return [studentInternalId, limitResponse.data.data.limits]
-            } catch {
-              return [studentInternalId, { daily_limit: '', weekly_limit: '' }]
-            }
-          }))
-          setLimits(Object.fromEntries(limitEntries))
+        if (user?.role === 'parent' || user?.role === 'admin' || user?.role === 'super_admin') {
+          const studentIds = walletList.map(getStudentInternalId).filter(Boolean)
+          if (studentIds.length) {
+            const limitResponse = await api.get('/spending/batch', {
+              params: { studentIds: studentIds.join(',') }
+            })
+            setLimits(Object.fromEntries(
+              limitResponse.data.data.limits.map(limit => [limit.student_id, limit])
+            ))
+          } else if (walletList.length) {
+            setError('Could not load spending limits because wallet data did not include valid student IDs. Refresh the page or contact support.')
+          }
         }
       }catch(e){
         setError(e.response?.data?.message || e.message)
@@ -57,6 +64,10 @@ export default function Wallet(){
   async function saveLimit(studentId) {
     setError(null)
     setSuccess(null)
+    if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1) {
+      setError('Cannot save a spending limit because this wallet has no valid student ID.')
+      return
+    }
     setSavingLimitId(studentId)
 
     try {
@@ -129,7 +140,7 @@ export default function Wallet(){
                   <span>Ready for approved school purchases</span>
                 </div>
                 <span className={`wallet-status wallet-status-${item.status}`}>{item.status || 'active'}</span>
-                {(user?.role === 'parent' || user?.role === 'admin') && (
+                {(user?.role === 'parent' || user?.role === 'admin' || user?.role === 'super_admin') && (
                   <div className="spending-limit-form">
                     <div className="field">
                       <label htmlFor={`dailyLimit-${item.id}`}>Daily limit</label>
@@ -138,8 +149,8 @@ export default function Wallet(){
                         type="number"
                         min="0"
                         step="0.01"
-                        value={limits[item.student_internal_id || item.student_id]?.daily_limit ?? ''}
-                        onChange={e => updateLimit(item.student_internal_id || item.student_id, 'daily_limit', e.target.value)}
+                        value={limits[getStudentInternalId(item)]?.daily_limit ?? ''}
+                        onChange={e => updateLimit(getStudentInternalId(item), 'daily_limit', e.target.value)}
                         placeholder="No daily limit"
                       />
                     </div>
@@ -150,18 +161,18 @@ export default function Wallet(){
                         type="number"
                         min="0"
                         step="0.01"
-                        value={limits[item.student_internal_id || item.student_id]?.weekly_limit ?? ''}
-                        onChange={e => updateLimit(item.student_internal_id || item.student_id, 'weekly_limit', e.target.value)}
+                        value={limits[getStudentInternalId(item)]?.weekly_limit ?? ''}
+                        onChange={e => updateLimit(getStudentInternalId(item), 'weekly_limit', e.target.value)}
                         placeholder="No weekly limit"
                       />
                     </div>
                     <button
                       className="secondary-button"
                       type="button"
-                      onClick={() => saveLimit(item.student_internal_id || item.student_id)}
-                      disabled={savingLimitId === (item.student_internal_id || item.student_id)}
+                      onClick={() => saveLimit(getStudentInternalId(item))}
+                      disabled={savingLimitId === getStudentInternalId(item)}
                     >
-                      {savingLimitId === (item.student_internal_id || item.student_id) ? 'Saving...' : 'Save limit'}
+                      {savingLimitId === getStudentInternalId(item) ? 'Saving...' : 'Save limit'}
                     </button>
                   </div>
                 )}

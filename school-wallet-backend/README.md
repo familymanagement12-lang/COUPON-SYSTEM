@@ -105,7 +105,10 @@ The server will run on `http://localhost:3000`
 5. After setting the database environment, run `npm run init-db` and
    `npm run migrate` from the backend service shell. Then run
    `npm run create-super-admin` once with the intended administrator
-   credentials.
+   credentials. The configured `SUPER_ADMIN_EMAIL` is the bootstrap
+   super-admin; it can create up to four additional super-admin accounts from
+   the admin portal. Additional accounts use their own email and password and
+   do not require individual Render environment variables.
 6. Configure the payment provider's live credentials only after successful
    test-mode top-ups and reconciliation. Point its webhook to
    `https://<backend-host>/api/topups/webhook`.

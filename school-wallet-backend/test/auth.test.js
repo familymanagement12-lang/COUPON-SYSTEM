@@ -244,6 +244,196 @@ test('case-insensitive email migration is additive and versioned', async () => {
   assert.doesNotMatch(migration, /\b(DROP|DELETE|TRUNCATE)\b/i);
 });
 
+test('super-admin creation assigns the role in a locked transaction without returning credentials', async () => {
+  const statements = [];
+  let insertedRole;
+  let storedPasswordHash;
+  process.env.SUPER_ADMIN_EMAIL = 'owner@example.test';
+  clientHandler = async () => ({
+    async query(sql, params = []) {
+      statements.push(sql);
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (/pg_advisory_xact_lock/i.test(sql)) return { rows: [] };
+      if (/SELECT COUNT\(\*\)::int AS count/i.test(sql)) return { rows: [{ count: 1 }] };
+      if (/INSERT INTO users/i.test(sql)) {
+        insertedRole = params[4];
+        storedPasswordHash = params[3];
+        return {
+          rows: [{
+            id: 45,
+            username: params[0],
+            email: params[1],
+            phone: params[2],
+            role: params[4],
+            status: 'active',
+            created_at: '2026-11-10T12:00:00.000Z'
+          }]
+        };
+      }
+      if (/INSERT INTO audit_logs/i.test(sql)) return { rows: [] };
+      throw new Error(`Unexpected transaction query: ${sql}`);
+    },
+    release() {}
+  });
+
+  const res = response();
+  await AuthController.createSuperAdmin({
+    body: {
+      username: 'second.admin',
+      email: 'Second.Admin@example.test',
+      password: 'a-different-secure-password-123',
+      confirmPassword: 'a-different-secure-password-123'
+    },
+    user: { id: 1 },
+    ip: '127.0.0.1'
+  }, res);
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(insertedRole, 'super_admin');
+  assert.equal(res.body.data.user.email, 'second.admin@example.test');
+  assert.equal(res.body.data.user.role, 'super_admin');
+  assert.equal(res.body.data.tokens, undefined);
+  assert.equal(await bcrypt.compare('a-different-secure-password-123', storedPasswordHash), true);
+  assert.equal(statements[0], 'BEGIN');
+  assert.match(statements[1], /pg_advisory_xact_lock/i);
+  assert.equal(statements.at(-1), 'COMMIT');
+});
+
+test('super-admin creation enforces the five-account cap under the advisory lock', async () => {
+  const statements = [];
+  clientHandler = async () => ({
+    async query(sql) {
+      statements.push(sql);
+      if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [] };
+      if (/pg_advisory_xact_lock/i.test(sql)) return { rows: [] };
+      if (/SELECT COUNT\(\*\)::int AS count/i.test(sql)) return { rows: [{ count: 5 }] };
+      throw new Error(`Unexpected transaction query: ${sql}`);
+    },
+    release() {}
+  });
+
+  const res = response();
+  await AuthController.createSuperAdmin({
+    body: {
+      username: 'sixth.admin',
+      email: 'sixth.admin@example.test',
+      password: 'another-different-secure-password-123',
+      confirmPassword: 'another-different-secure-password-123'
+    },
+    user: { id: 1 },
+    ip: '127.0.0.1'
+  }, res);
+
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.message, 'The system is limited to five super administrators');
+  assert.equal(statements[0], 'BEGIN');
+  assert.equal(statements[1], 'SELECT pg_advisory_xact_lock($1)');
+  assert.match(statements[2], /SELECT COUNT\(\*\)::int AS count/i);
+  assert.equal(statements[3], 'ROLLBACK');
+  assert.equal(statements.length, 4);
+});
+
+test('existing admin promotion preserves credentials and records the role change', async () => {
+  const statements = [];
+  let updatedRole;
+  clientHandler = async () => ({
+    async query(sql, params = []) {
+      statements.push(sql);
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (/pg_advisory_xact_lock/i.test(sql)) return { rows: [] };
+      if (/SELECT id, username, email, role, status, created_at/i.test(sql)) {
+        return {
+          rows: [{
+            id: 45,
+            username: 'gideon.akussah',
+            email: 'gideon.akussah1234@gmail.com',
+            role: 'admin',
+            status: 'active'
+          }]
+        };
+      }
+      if (/SELECT COUNT\(\*\)::int AS count/i.test(sql)) return { rows: [{ count: 1 }] };
+      if (/UPDATE users/i.test(sql)) {
+        updatedRole = /SET role = 'super_admin'/i.test(sql);
+        return {
+          rows: [{
+            id: 45,
+            username: 'gideon.akussah',
+            email: 'gideon.akussah1234@gmail.com',
+            role: 'super_admin',
+            status: 'active'
+          }]
+        };
+      }
+      if (/INSERT INTO audit_logs/i.test(sql)) return { rows: [] };
+      throw new Error(`Unexpected transaction query: ${sql}`);
+    },
+    release() {}
+  });
+
+  const res = response();
+  await AuthController.promoteSuperAdmin({
+    body: { email: 'Gideon.Akussah1234@gmail.com ' },
+    user: { id: 1 },
+    ip: '127.0.0.1'
+  }, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(updatedRole, true);
+  assert.equal(res.body.data.user.role, 'super_admin');
+  assert.match(res.body.message, /promoted/i);
+  assert.ok(statements.some(sql => /INSERT INTO audit_logs/i.test(sql)));
+  assert.equal(statements.at(-1), 'COMMIT');
+});
+
+test('existing admin promotion enforces the five-account cap', async () => {
+  const statements = [];
+  clientHandler = async () => ({
+    async query(sql) {
+      statements.push(sql);
+      if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [] };
+      if (/pg_advisory_xact_lock/i.test(sql)) return { rows: [] };
+      if (/SELECT id, username, email, role, status, created_at/i.test(sql)) {
+        return {
+          rows: [{
+            id: 45,
+            username: 'sixth.admin',
+            email: 'sixth.admin@example.test',
+            role: 'admin',
+            status: 'active'
+          }]
+        };
+      }
+      if (/SELECT COUNT\(\*\)::int AS count/i.test(sql)) return { rows: [{ count: 5 }] };
+      throw new Error(`Unexpected transaction query: ${sql}`);
+    },
+    release() {}
+  });
+
+  const res = response();
+  await AuthController.promoteSuperAdmin({
+    body: { email: 'sixth.admin@example.test' },
+    user: { id: 1 },
+    ip: '127.0.0.1'
+  }, res);
+
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.message, 'The system is limited to five super administrators');
+  assert.equal(statements.at(-1), 'ROLLBACK');
+  assert.equal(statements.some(sql => /UPDATE users/i.test(sql)), false);
+});
+
+test('super-admin role migration preserves existing roles and adds only the new role', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const migration = fs.readFileSync(
+    path.join(__dirname, '../migrations/003_super_admin_role.sql'),
+    'utf8'
+  );
+  assert.match(migration, /CHECK\s*\(role IN \('admin', 'super_admin', 'parent', 'student', 'vendor'\)\)/i);
+  assert.doesNotMatch(migration, /\b(DELETE|TRUNCATE)\b/i);
+});
+
 test.after(async () => {
   await database.pool.end();
 });

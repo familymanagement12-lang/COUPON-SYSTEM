@@ -5,10 +5,13 @@ const SUPER_ADMIN_EMAIL = (process.env.SUPER_ADMIN_EMAIL || '').trim().toLowerCa
 
 const isSuperAdmin = (user) => Boolean(
   user &&
-  user.role === 'admin' &&
-  user.email &&
-  user.email.toLowerCase() === SUPER_ADMIN_EMAIL
+  (user.role === 'super_admin'
+    || (user.role === 'admin'
+      && user.email
+      && user.email.toLowerCase() === SUPER_ADMIN_EMAIL))
 );
+
+const isAdmin = (user) => user?.role === 'admin' || user?.role === 'super_admin';
 
 /**
  * Verify JWT token and attach user to request
@@ -165,6 +168,7 @@ module.exports = {
   authenticateToken,
   authorizeRole,
   authorizeSuperAdmin,
+  isAdmin,
   isSuperAdmin,
   optionalAuth,
   rateLimiter

@@ -1,6 +1,7 @@
 import axios from 'axios'
 
 const configuredApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000/api'
+const SLOW_REQUEST_THRESHOLD_MS = 1000
 
 const api = axios.create({
   baseURL: configuredApiUrl.replace(/\/+$/, ''),
@@ -20,16 +21,36 @@ function addRefreshSubscriber(cb) {
 }
 
 api.interceptors.request.use(config => {
+  config.metadata = { startedAt: performance.now() }
   const token = localStorage.getItem('accessToken')
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
 
+function logRequestPerformance(config, response, error) {
+  const durationMs = Math.round(performance.now() - (config?.metadata?.startedAt ?? performance.now()))
+  if (!error && durationMs < SLOW_REQUEST_THRESHOLD_MS) return
+
+  console.warn('[api] request performance', {
+    method: config?.method?.toUpperCase(),
+    url: config?.url?.split('?')[0],
+    durationMs,
+    timeoutMs: config?.timeout,
+    status: response?.status || error?.response?.status,
+    code: error?.code,
+    requestId: response?.headers?.['x-request-id'] || error?.response?.headers?.['x-request-id']
+  })
+}
+
 api.interceptors.response.use(
-  res => res,
+  res => {
+    logRequestPerformance(res.config, res)
+    return res
+  },
   async err => {
+    logRequestPerformance(err.config, err.response, err)
     const originalRequest = err.config
-    if (err.response && err.response.status === 401 && !originalRequest._retry) {
+    if (err.response && err.response.status === 401 && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true
       const refreshToken = localStorage.getItem('refreshToken')
       if (!refreshToken) return Promise.reject(err)

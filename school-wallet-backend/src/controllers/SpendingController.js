@@ -1,6 +1,8 @@
 const SpendingLimit = require('../models/SpendingLimit');
 const ResponseHandler = require('../utils/response');
 const Parent = require('../models/Parent');
+const parseStudentIds = require('../utils/parseStudentIds');
+const { isAdmin } = require('../middleware/auth');
 
 const parseLimit = (value) => {
   if (value === '' || value === null || value === undefined) return null;
@@ -13,7 +15,7 @@ const parseLimit = (value) => {
 
 class SpendingController {
   static async authorizeStudentAccess(req, studentId) {
-    if (req.user.role === 'admin') return true;
+    if (isAdmin(req.user)) return true;
 
     const parent = await Parent.findByUserId(req.user.id);
     if (!parent) return false;
@@ -25,6 +27,9 @@ class SpendingController {
   static async getLimits(req, res) {
     try {
       const { studentId } = req.params;
+      if (!/^\d+$/.test(studentId) || Number(studentId) < 1) {
+        return ResponseHandler.badRequest(res, 'studentId must be a positive number');
+      }
       const canAccess = await SpendingController.authorizeStudentAccess(req, studentId);
       if (!canAccess) return ResponseHandler.forbidden(res, 'You cannot access spending limits for this student');
 
@@ -42,9 +47,43 @@ class SpendingController {
     }
   }
 
+  static async getLimitsBatch(req, res) {
+    try {
+      const studentIds = parseStudentIds(req.query.studentIds);
+      if (!studentIds) {
+        return ResponseHandler.badRequest(res, 'Provide between 1 and 100 valid student IDs');
+      }
+
+      if (req.user.role === 'parent') {
+        const parent = await Parent.findByUserId(req.user.id);
+        const children = parent ? await Parent.getChildren(parent.id) : [];
+        const linkedIds = new Set(children.map(child => Number(child.id)));
+        if (studentIds.some(id => !linkedIds.has(id))) {
+          return ResponseHandler.forbidden(res, 'You cannot access spending limits for this student');
+        }
+      }
+
+      const records = await SpendingLimit.getByStudents(studentIds);
+      const limitsByStudentId = new Map(records.map(record => [Number(record.student_id), record]));
+      const limits = studentIds.map(studentId => limitsByStudentId.get(studentId) || {
+        student_id: studentId,
+        daily_limit: null,
+        weekly_limit: null
+      });
+
+      return ResponseHandler.success(res, 'Spending limits', { limits });
+    } catch (error) {
+      console.error('Get spending limits batch error:', error);
+      return ResponseHandler.serverError(res, 'Failed to retrieve limits');
+    }
+  }
+
   static async setLimits(req, res) {
     try {
       const { studentId } = req.params;
+      if (!/^\d+$/.test(studentId) || Number(studentId) < 1) {
+        return ResponseHandler.badRequest(res, 'studentId must be a positive number');
+      }
       const canAccess = await SpendingController.authorizeStudentAccess(req, studentId);
       if (!canAccess) return ResponseHandler.forbidden(res, 'You cannot update spending limits for this student');
 

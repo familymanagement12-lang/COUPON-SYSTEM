@@ -53,10 +53,13 @@ export default function SuperAdmin() {
   const [students, setStudents] = useState([{ ...emptyStudent }])
   const [studentDirectory, setStudentDirectory] = useState([])
   const [walletSnapshot, setWalletSnapshot] = useState([])
+  const [superAdmins, setSuperAdmins] = useState([])
+  const [promotionEmail, setPromotionEmail] = useState('')
   const [accountMessage, setAccountMessage] = useState(null)
   const [studentMessage, setStudentMessage] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [importProgress, setImportProgress] = useState(null)
 
   const walletSummary = walletSnapshot.reduce((summary, wallet) => {
     const balance = Number(wallet.balance || 0)
@@ -77,18 +80,56 @@ export default function SuperAdmin() {
     }
   }
 
-  async function loadStudentDirectory() {
+  async function loadSuperAdmins() {
     try {
-      const response = await api.get('/students?limit=500')
-      setStudentDirectory(response.data.data.students || [])
+      const response = await api.get('/auth/super-admins')
+      setSuperAdmins(response.data.data.users || [])
     } catch (requestError) {
       setError(requestError.response?.data?.message || requestError.message)
     }
   }
 
+  async function loadStudentDirectory() {
+    try {
+      const pageSize = 500
+      const allStudents = []
+      let offset = 0
+
+      while (true) {
+        const response = await api.get('/students', {
+          params: { limit: pageSize, offset },
+          timeout: 30000
+        })
+        const page = response.data.data.students || []
+        allStudents.push(...page)
+        if (page.length < pageSize) break
+        offset += page.length
+      }
+
+      setStudentDirectory(allStudents)
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || requestError.message)
+    }
+  }
+
+  function addImportedStudentsToDirectory(importedStudents) {
+    if (!Array.isArray(importedStudents) || importedStudents.length === 0) return
+
+    setStudentDirectory(current => {
+      const byId = new Map(current.map(student => [student.id, student]))
+      importedStudents.forEach(student => byId.set(student.id, {
+        ...student,
+        balance: '0.00',
+        wallet_status: 'active'
+      }))
+      return [...byId.values()].sort((left, right) => right.id - left.id)
+    })
+  }
+
   useEffect(() => {
     loadWalletSnapshot()
     loadStudentDirectory()
+    loadSuperAdmins()
   }, [])
 
   function updateAccount(field, value) {
@@ -155,9 +196,30 @@ export default function SuperAdmin() {
     setAccountMessage(null)
     setLoading(true)
     try {
-      const response = await api.post('/auth/register', account)
-      setAccountMessage(`${account.role} account created for ${response.data.data.user.email}.`)
+      const creatingSuperAdmin = account.role === 'super_admin'
+      const response = creatingSuperAdmin
+        ? await api.post('/auth/super-admins', account)
+        : await api.post('/auth/register', account)
+      setAccountMessage(`${creatingSuperAdmin ? 'Super admin' : account.role} account created for ${response.data.data.user.email}.`)
       setAccount(emptyAccount)
+      if (creatingSuperAdmin) await loadSuperAdmins()
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || requestError.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function promoteAdmin(event) {
+    event.preventDefault()
+    setError(null)
+    setAccountMessage(null)
+    setLoading(true)
+    try {
+      const response = await api.post('/auth/super-admins/promote', { email: promotionEmail })
+      setAccountMessage(`Existing admin account promoted for ${response.data.data.user.email}. Their password is unchanged.`)
+      setPromotionEmail('')
+      await loadSuperAdmins()
     } catch (requestError) {
       setError(requestError.response?.data?.message || requestError.message)
     } finally {
@@ -169,7 +231,12 @@ export default function SuperAdmin() {
     event.preventDefault()
     setError(null)
     setStudentMessage(null)
+    setImportProgress(null)
     setLoading(true)
+    let importedCount = 0
+    let studentsToImport = []
+    let nextOffset = 0
+    let requestInFlight = false
     try {
       const incompleteRow = students.findIndex(student => !student.firstName.trim() || !student.lastName.trim())
       if (incompleteRow !== -1) {
@@ -181,18 +248,40 @@ export default function SuperAdmin() {
         throw new Error('Student IDs must be unique.')
       }
 
-      const response = await api.post('/students/import', {
-        students: students.map(student => ({
-          ...student,
-          studentId: student.studentId.trim() || undefined
-        }))
-      })
-      setStudentMessage(`${response.data.data.count} student(s) onboarded successfully.`)
+      studentsToImport = students.map(student => ({
+        ...student,
+        studentId: student.studentId.trim() || undefined
+      }))
+      const batchSize = 20
+      for (let offset = 0; offset < studentsToImport.length; offset += batchSize) {
+        const batch = studentsToImport.slice(offset, offset + batchSize)
+        nextOffset = offset
+        requestInFlight = true
+        const response = await api.post('/students/import', { students: batch }, { timeout: 45000 })
+        importedCount += response.data.data.count
+        addImportedStudentsToDirectory(response.data.data.students)
+        nextOffset = offset + batch.length
+        requestInFlight = false
+        setImportProgress({ imported: importedCount, total: studentsToImport.length })
+      }
+
+      setStudentMessage(`${importedCount} student(s) onboarded successfully.`)
       setStudents([{ ...emptyStudent }])
       await loadStudentDirectory()
       await loadWalletSnapshot()
     } catch (requestError) {
-      setError(requestError.response?.data?.message || requestError.message)
+      const outcomeMayBeUnknown = requestInFlight
+        && (requestError.code === 'ECONNABORTED' || requestError.code === 'ERR_NETWORK')
+      if (importedCount > 0 || outcomeMayBeUnknown) {
+        const remainingStudents = studentsToImport.slice(nextOffset)
+        setStudents(remainingStudents)
+        setStudentMessage(outcomeMayBeUnknown
+          ? `${importedCount} student(s) confirmed imported. The last batch timed out, so its result is unknown. Refresh the directory before retrying the remaining ${remainingStudents.length} row(s).`
+          : `${importedCount} student(s) imported. The next batch failed: ${requestError.response?.data?.message || requestError.message}. ${remainingStudents.length} row(s) remain in the form.`)
+        await loadStudentDirectory()
+      } else {
+        setError(requestError.response?.data?.message || requestError.message)
+      }
     } finally {
       setLoading(false)
     }
@@ -234,9 +323,9 @@ export default function SuperAdmin() {
             <small>{walletSummary.frozen + walletSummary.closed} need attention</small>
           </div>
           <div className="metric-card">
-            <span>Students onboarded</span>
+            <span>Total students in directory</span>
             <strong>{studentDirectory.length}</strong>
-            <small>Records in the directory</small>
+            <small>Includes earlier imports; latest batch count appears below the form.</small>
           </div>
         </div>
 
@@ -267,7 +356,7 @@ export default function SuperAdmin() {
       <div className="admin-grid">
         <section className="admin-section">
           <h2>Create an account</h2>
-          <p className="section-note">Create a vendor or another administrator from this protected portal.</p>
+          <p className="section-note">Create vendor/admin accounts or additional super admins. Each super admin uses their own email and password.</p>
           <form className="auth-form" onSubmit={createAccount}>
             <div className="form-grid">
               <div className="field">
@@ -275,6 +364,7 @@ export default function SuperAdmin() {
                 <select id="accountRole" value={account.role} onChange={e => updateAccount('role', e.target.value)}>
                   <option value="vendor">Vendor</option>
                   <option value="admin">Admin</option>
+                  <option value="super_admin" disabled={superAdmins.length >= 5}>Super admin ({superAdmins.length}/5)</option>
                 </select>
               </div>
               <div className="field">
@@ -295,20 +385,61 @@ export default function SuperAdmin() {
             <div className="form-grid">
               <div className="field">
                 <label htmlFor="accountPassword">Password</label>
-                <input id="accountPassword" type="password" minLength="8" required value={account.password} onChange={e => updateAccount('password', e.target.value)} />
+                <input id="accountPassword" type="password" minLength="12" required value={account.password} onChange={e => updateAccount('password', e.target.value)} />
               </div>
               <div className="field">
                 <label htmlFor="accountConfirmPassword">Confirm password</label>
-                <input id="accountConfirmPassword" type="password" minLength="8" required value={account.confirmPassword} onChange={e => updateAccount('confirmPassword', e.target.value)} />
+                <input id="accountConfirmPassword" type="password" minLength="12" required value={account.confirmPassword} onChange={e => updateAccount('confirmPassword', e.target.value)} />
               </div>
             </div>
-            <button type="submit" disabled={loading}>Create account</button>
+            <button type="submit" disabled={loading || (account.role === 'super_admin' && superAdmins.length >= 5)}>
+              {loading ? 'Creating account...' : 'Create account'}
+            </button>
+          </form>
+          <form className="auth-form" onSubmit={promoteAdmin}>
+            <h3>Promote an existing admin</h3>
+            <p className="section-note">Promoting an account preserves its current email, username, and password.</p>
+            <div className="field">
+              <label htmlFor="promotionEmail">Existing admin email</label>
+              <input
+                id="promotionEmail"
+                type="email"
+                required
+                value={promotionEmail}
+                onChange={event => setPromotionEmail(event.target.value)}
+              />
+            </div>
+            <button type="submit" className="secondary-button" disabled={loading || superAdmins.length >= 5}>
+              {loading ? 'Promoting account...' : 'Promote existing admin'}
+            </button>
           </form>
         </section>
 
         <section className="admin-section">
+          <h2>Super admins ({superAdmins.length}/5)</h2>
+          <p className="section-note">The initial super admin is configured once. Additional admins are managed here.</p>
+          <div className="student-table-wrap">
+            <table className="student-table">
+              <thead>
+                <tr><th>Username</th><th>Email</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                {superAdmins.map(admin => (
+                  <tr key={admin.id}>
+                    <td>{admin.username}</td>
+                    <td>{admin.email}</td>
+                    <td>{admin.status}</td>
+                  </tr>
+                ))}
+                {!superAdmins.length && <tr><td colSpan="3">No super admins found.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="admin-section">
           <h2>Onboard students</h2>
-          <p className="section-note">Add one row per student. Leave the ID blank to generate a unique ID automatically.</p>
+          <p className="section-note">Only first and last name are required. Student ID is generated when blank; class and date of birth are optional.</p>
           <form className="auth-form" onSubmit={importStudents}>
             <div className="upload-actions">
               <label className="file-button" htmlFor="studentCsv">Upload CSV</label>
@@ -342,8 +473,13 @@ export default function SuperAdmin() {
               </table>
             </div>
             <button className="secondary-button" type="button" onClick={addStudentRow}>Add student row</button>
-            <button type="submit" disabled={loading}>Import students</button>
+            <button type="submit" disabled={loading}>{loading ? 'Importing students...' : 'Import students'}</button>
+            {importProgress && loading && (
+              <p role="status">Imported {importProgress.imported} of {importProgress.total} students...</p>
+            )}
           </form>
+          {studentMessage && <p className="success" role="status">{studentMessage}</p>}
+          {error && <p className="error" role="alert">{error}</p>}
         </section>
       </div>
 
@@ -378,8 +514,6 @@ export default function SuperAdmin() {
       </section>
 
       {accountMessage && <p className="success">{accountMessage}</p>}
-      {studentMessage && <p className="success">{studentMessage}</p>}
-      {error && <p className="error">{error}</p>}
     </main>
   )
 }

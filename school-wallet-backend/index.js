@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const { requestContext } = require('./src/utils/requestContext');
 require('dotenv').config({ path: ['.env.local', '.env'] });
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -42,11 +43,15 @@ const db = require('./src/config/database');
 app.set('db', db);
 
 // Middleware
+app.use(requestContext);
 app.use(helmet()); // Security headers
 app.use(cors({
-  origin: (origin, callback) => callback(null, !origin || frontendOrigins.includes(origin))
+  origin: (origin, callback) => callback(null, !origin || frontendOrigins.includes(origin)),
+  exposedHeaders: ['X-Request-Id']
 }));
-app.use(morgan('dev')); // Request logging
+morgan.token('request-id', (req) => req.requestId);
+morgan.token('path', (req) => req.path);
+app.use(morgan(':request-id :method :path :status :response-time ms'));
 app.use(express.json({
   verify: (req, res, buffer) => {
     req.rawBody = buffer.toString();

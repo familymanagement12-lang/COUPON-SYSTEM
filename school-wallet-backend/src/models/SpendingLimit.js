@@ -7,6 +7,14 @@ class SpendingLimit {
     return result.rows[0];
   }
 
+  static async getByStudents(studentIds) {
+    const result = await query(
+      'SELECT * FROM spending_limits WHERE student_id = ANY($1::int[])',
+      [studentIds]
+    );
+    return result.rows;
+  }
+
   static async setForStudent(studentId, { daily_limit = null, weekly_limit = null }) {
     const sql = `INSERT INTO spending_limits (student_id, daily_limit, weekly_limit, created_at)
       VALUES ($1,$2,$3,NOW())

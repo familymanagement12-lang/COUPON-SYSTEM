@@ -82,7 +82,7 @@ export default function Dashboard(){
             <p key={student.id || student.student_id}>{student.student_id} - {student.first_name || ''} {student.last_name}</p>
           )) : <p>No students linked yet.</p>}
         </>
-      ) : wallet && user?.role === 'admin' ? (
+      ) : wallet && (user?.role === 'admin' || user?.role === 'super_admin') ? (
         <section className="admin-section wallet-overview">
           <div className="directory-heading">
             <div>
@@ -118,7 +118,7 @@ export default function Dashboard(){
                 <div className="wallet-avatar">{`${item.first_name?.[0] || ''}${item.last_name?.[0] || ''}` || 'SW'}</div>
                 <div className="wallet-student">
                   <strong>{item.first_name} {item.last_name}</strong>
-                  <span>{item.student_id} · {item.email}</span>
+                  <span>{item.student_code || item.student_id} · {item.email}</span>
                 </div>
                 <div className="wallet-balance">
                   <strong>GHS {Number(item.balance || 0).toFixed(2)}</strong>

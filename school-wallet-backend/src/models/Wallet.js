@@ -248,7 +248,8 @@ class Wallet {
    */
   static async getAllWallets(limit = 50, offset = 0) {
     const result = await query(
-      `SELECT w.*, s.student_id, s.first_name, s.last_name, u.email
+      `SELECT w.*, w.student_id AS student_internal_id, s.student_id AS student_code,
+              s.first_name, s.last_name, u.email
        FROM wallets w
        JOIN students s ON w.student_id = s.id
        JOIN users u ON s.user_id = u.id

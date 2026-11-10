@@ -2,6 +2,7 @@ const { query } = require('../config/database');
 const logger = require('../utils/logger');
 const Vendor = require('../models/Vendor');
 const ResponseHandler = require('../utils/response');
+const { isAdmin } = require('../middleware/auth');
 
 const register = async (req, res) => {
     try {
@@ -48,7 +49,7 @@ const getVendor = async (req, res) => {
 const getSummary = async (req, res) => {
     const vendorId = parseInt(req.params.vendorId, 10);
 
-    if (req.user.role !== 'admin' && req.user.vendorId !== vendorId) {
+    if (!isAdmin(req.user) && req.user.vendorId !== vendorId) {
         return ResponseHandler.forbidden(res, 'You can only view your own vendor summary.');
     }
 
@@ -92,7 +93,7 @@ const getTransactions = async (req, res) => {
 
     // Authorization check: Ensure the logged-in user is the vendor or an admin.
     // Note: The JWT payload should contain `vendorId` for vendor users.
-    if (req.user.role !== 'admin' && req.user.vendorId !== parseInt(vendorId, 10)) {
+    if (!isAdmin(req.user) && req.user.vendorId !== parseInt(vendorId, 10)) {
         logger.warn(`Forbidden attempt to access vendor transactions. User: ${req.user.id}, Target Vendor: ${vendorId}`);
         return res.status(403).json({
             status: 'error',

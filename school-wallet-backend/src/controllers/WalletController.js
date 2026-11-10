@@ -32,7 +32,7 @@ class WalletController {
       const userId = req.user?.id;
       const userRole = req.user?.role;
 
-      if (userRole === 'admin') {
+      if (userRole === 'admin' || userRole === 'super_admin') {
         return WalletController.getAllWallets(req, res);
       }
 
