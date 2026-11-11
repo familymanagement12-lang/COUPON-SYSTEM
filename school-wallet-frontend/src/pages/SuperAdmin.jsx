@@ -55,6 +55,9 @@ export default function SuperAdmin() {
   const [directorySearch, setDirectorySearch] = useState('')
   const [walletSnapshot, setWalletSnapshot] = useState([])
   const [superAdmins, setSuperAdmins] = useState([])
+  const [resetRequests, setResetRequests] = useState([])
+  const [resetHistory, setResetHistory] = useState(null)
+  const [generatedResetCode, setGeneratedResetCode] = useState(null)
   const [promotionEmail, setPromotionEmail] = useState('')
   const [accountMessage, setAccountMessage] = useState(null)
   const [studentMessage, setStudentMessage] = useState(null)
@@ -90,6 +93,39 @@ export default function SuperAdmin() {
     try {
       const response = await api.get('/auth/super-admins')
       setSuperAdmins(response.data.data.users || [])
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || requestError.message)
+    }
+  }
+
+  async function loadResetRequests() {
+    try {
+      const response = await api.get('/password-resets')
+      setResetRequests(response.data.data.requests || [])
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || requestError.message)
+    }
+  }
+
+  async function updateResetRequest(requestId, action) {
+    setError(null)
+    setGeneratedResetCode(null)
+    try {
+      const response = await api.post(`/password-resets/${requestId}/${action}`)
+      if (action === 'code') {
+        setGeneratedResetCode({ requestId, code: response.data.data.code })
+      }
+      await loadResetRequests()
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || requestError.message)
+    }
+  }
+
+  async function loadResetHistory(requestId) {
+    setError(null)
+    try {
+      const response = await api.get(`/password-resets/${requestId}/history`)
+      setResetHistory({ requestId, entries: response.data.data.history || [] })
     } catch (requestError) {
       setError(requestError.response?.data?.message || requestError.message)
     }
@@ -136,6 +172,7 @@ export default function SuperAdmin() {
     loadWalletSnapshot()
     loadStudentDirectory()
     loadSuperAdmins()
+    loadResetRequests()
   }, [])
 
   function updateAccount(field, value) {
@@ -368,6 +405,57 @@ export default function SuperAdmin() {
             </div>
           )}
         </div>
+      </section>
+
+      <section className="admin-section student-directory">
+        <div className="directory-heading">
+          <div>
+            <h2>Password reset requests</h2>
+            <p className="section-note">Review account recovery requests. Generated codes are shown once and expire after 15 minutes.</p>
+          </div>
+          <button className="secondary-button" type="button" onClick={loadResetRequests}>Refresh requests</button>
+        </div>
+        {error && <p className="error" role="alert">{error}</p>}
+        {generatedResetCode && <div className="reset-code-reveal" role="status">
+          <div><strong>Reset code for request #{generatedResetCode.requestId}</strong><code>{generatedResetCode.code}</code><span>Copy or communicate this code now. It will not be shown again.</span></div>
+          <button className="secondary-button" type="button" onClick={() => setGeneratedResetCode(null)} aria-label="Dismiss generated code">Dismiss</button>
+        </div>}
+        <div className="student-table-wrap">
+          <table className="student-table reset-request-table">
+            <thead><tr><th>User</th><th>Email</th><th>Role</th><th>Requested</th><th>Status</th><th>Assigned Superadmin</th><th>Actions</th></tr></thead>
+            <tbody>
+              {resetRequests.map(request => {
+                const hasRevocableCode = request.code_expires_at && !request.code_used_at && !request.code_revoked_at
+                return <tr key={request.id}>
+                  <td>{request.full_name}</td>
+                  <td>{request.email}</td>
+                  <td>{request.role}</td>
+                  <td>{new Date(request.created_at).toLocaleString()}</td>
+                  <td>{request.status}</td>
+                  <td>{request.assigned_superadmin_username || request.assigned_superadmin_email || 'Unassigned'}</td>
+                  <td><div className="reset-request-actions">
+                    {request.status === 'pending' && <>
+                      <button type="button" onClick={() => updateResetRequest(request.id, 'approve')}>Approve</button>
+                      <button className="remove-row" type="button" onClick={() => updateResetRequest(request.id, 'reject')}>Reject</button>
+                    </>}
+                    {request.status === 'approved' && <button type="button" onClick={() => updateResetRequest(request.id, 'code')}>Generate code</button>}
+                    {hasRevocableCode && <button className="remove-row" type="button" onClick={() => updateResetRequest(request.id, 'revoke-code')}>Revoke code</button>}
+                    <button className="secondary-button" type="button" onClick={() => loadResetHistory(request.id)}>History</button>
+                  </div></td>
+                </tr>
+              })}
+              {!resetRequests.length && <tr><td colSpan="7">No password reset requests.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        {resetHistory && <section className="reset-history" aria-label="Password reset request history">
+          <div className="directory-heading"><h3>Request #{resetHistory.requestId} history</h3><button className="secondary-button" type="button" onClick={() => setResetHistory(null)}>Close history</button></div>
+          {!resetHistory.entries.length && <p className="section-note">No history entries recorded.</p>}
+          {resetHistory.entries.map(entry => <div className="reset-history-row" key={entry.id}>
+            <strong>{entry.action.replaceAll('_', ' ')}</strong>
+            <span>{entry.actor_username ? `${entry.actor_username} · ` : ''}{new Date(entry.created_at).toLocaleString()}</span>
+          </div>)}
+        </section>}
       </section>
 
       <div className="admin-grid">

@@ -1,26 +1,23 @@
 import React, { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import api from '../services/api'
 import schoolLogo from '../public/cropped-transparent-logo-1.png'
 
 export default function ForgotPassword() {
-  const [identifier, setIdentifier] = useState('')
+  const [email, setEmail] = useState('')
   const [message, setMessage] = useState(null)
-  const [resetUrl, setResetUrl] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
+  const navigate = useNavigate()
 
   async function submit(event) {
     event.preventDefault()
     setMessage(null)
-    setResetUrl(null)
     setError(null)
     setLoading(true)
     try {
-      const response = await api.post('/auth/forgot-password', { identifier })
-      const responseData = response.data?.data || response.data || {}
-      setResetUrl(responseData.resetUrl || null)
-      setMessage(response.data?.message || responseData.message || 'Reset instructions created.')
+      const response = await api.post('/auth/forgot-password', { email })
+      setMessage(response.data?.message || 'If an eligible account exists, a password reset request has been submitted.')
     } catch (requestError) {
       setError(requestError.response?.data?.message || requestError.message)
     } finally {
@@ -28,5 +25,5 @@ export default function ForgotPassword() {
     }
   }
 
-  return <main className="auth-page"><section className="auth-panel auth-panel-narrow"><div className="auth-copy"><img className="auth-logo" src={schoolLogo} alt="McCarthy Hill School logo" /><p className="eyebrow">McCarthy Hill School Coupon System</p><h1>Reset your password</h1><p>Enter your email or username and, if it matches an account, we will email a secure reset link.</p></div><form className="auth-form" onSubmit={submit}><div className="field"><label htmlFor="resetIdentifier">Email or username</label><input id="resetIdentifier" value={identifier} onChange={e => setIdentifier(e.target.value)} required /></div>{error && <p className="error">{error}</p>}{message && <p className="success reset-message">{message}</p>}{resetUrl && <a className="primary-button button-link" href={resetUrl}>Open reset page</a>}<button className="primary-button" type="submit" disabled={loading}>{loading ? 'Sending...' : 'Send reset instructions'}</button><p className="auth-switch"><Link to="/">Return to sign in</Link></p></form></section></main>
+  return <main className="auth-page"><section className="auth-panel auth-panel-narrow"><div className="auth-copy"><img className="auth-logo" src={schoolLogo} alt="McCarthy Hill School logo" /><p className="eyebrow">McCarthy Hill School Coupon System</p><h1>Request a password reset</h1><p>A Superadmin will review the request. If approved, they will provide a short-lived reset code.</p></div><form className="auth-form" onSubmit={submit}><div className="field"><label htmlFor="resetEmail">Registered email</label><input id="resetEmail" type="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} required /></div>{error && <p className="error">{error}</p>}{message && <p className="success reset-message" role="status">{message}</p>}{message && <button className="secondary-button" type="button" onClick={() => navigate('/verify-reset-code', { state: { email } })}>I have a reset code</button>}<button className="primary-button" type="submit" disabled={loading}>{loading ? 'Submitting...' : 'Submit request'}</button><p className="auth-switch"><Link to="/">Return to sign in</Link></p></form></section></main>
 }

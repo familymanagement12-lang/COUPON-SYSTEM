@@ -13,6 +13,8 @@ export default function TopUp(){
   const [studentId, setStudentId] = useState(null)
   const [wallets, setWallets] = useState([])
   const [message, setMessage] = useState(null)
+  const [paymentReference, setPaymentReference] = useState(null)
+  const [checkingPayment, setCheckingPayment] = useState(false)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
 
@@ -36,16 +38,30 @@ export default function TopUp(){
     return studentWallets
   }
 
-  async function verifyPayment(reference) {
+  async function verifyPayment(reference, attempt = 0) {
+    setPaymentReference(reference)
+    setCheckingPayment(true)
     try {
       const response = await api.get(`/topups/verify/${encodeURIComponent(reference)}`)
       await loadWallets()
       const newBalance = Number(response.data.data.newBalance || 0).toFixed(2)
+      sessionStorage.removeItem('pendingTopUpReference')
       sessionStorage.setItem('walletMessage', `Payment completed. Balance updated to GHS ${newBalance}.`)
       navigate('/wallet', { replace: true })
     } catch (e) {
-      setMessage(e.response?.data?.message || e.message)
-      await loadWallets()
+      if (attempt < 2) {
+        await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)))
+        return verifyPayment(reference, attempt + 1)
+      }
+      sessionStorage.setItem('pendingTopUpReference', reference)
+      setMessage('Payment confirmation is taking longer than expected. If you were charged, check again before starting another top-up.')
+      try {
+        await loadWallets()
+      } catch {
+        setMessage('Payment confirmation is still pending. Check again before starting another top-up.')
+      }
+    } finally {
+      if (attempt === 0 || attempt >= 2) setCheckingPayment(false)
     }
   }
 
@@ -54,7 +70,7 @@ export default function TopUp(){
       setLoading(true)
       try{
         const params = new URLSearchParams(window.location.search)
-        const reference = params.get('reference') || params.get('trxref')
+        const reference = params.get('reference') || params.get('trxref') || sessionStorage.getItem('pendingTopUpReference')
         const res = await api.get('/topups/methods')
         const availableMethods = res.data.data.methods || []
         setMethods(availableMethods)
@@ -139,8 +155,9 @@ export default function TopUp(){
               </select>
             </div>
 
-            <button className="primary-button" type="submit" disabled={submitting || !wallets.length}>{submitting ? 'Starting payment...' : 'Continue to payment'}</button>
-            {message && <p className={message.toLowerCase().includes('completed') ? 'success' : 'error'}>{message}</p>}
+            <button className="primary-button" type="submit" disabled={submitting || !wallets.length || Boolean(paymentReference)}>{submitting ? 'Starting payment...' : paymentReference ? 'Payment check pending' : 'Continue to payment'}</button>
+            {message && <p className={message.toLowerCase().includes('completed') ? 'success' : 'error'} role="status">{message}</p>}
+            {paymentReference && message && <button className="secondary-button" type="button" onClick={() => verifyPayment(paymentReference)} disabled={checkingPayment}>{checkingPayment ? 'Checking payment...' : 'Check payment again'}</button>}
           </form>
 
           <aside className="topup-summary">

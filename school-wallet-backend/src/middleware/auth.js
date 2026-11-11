@@ -34,6 +34,10 @@ const authenticateToken = async (req, res, next) => {
       return ResponseHandler.unauthorized(res, 'User not found');
     }
 
+    if (Number(decoded.tokenVersion || 0) !== Number(user.token_version || 0)) {
+      return ResponseHandler.unauthorized(res, 'Session expired. Please sign in again.');
+    }
+
     if (user.status === 'deleted' || user.status === 'inactive') {
       return ResponseHandler.unauthorized(res, 'User account is inactive');
     }

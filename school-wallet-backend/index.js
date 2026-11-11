@@ -100,6 +100,7 @@ app.get('/api', (req, res) => {
 
 // Route imports
 const authRoutes = require('./src/routes/auth');
+const passwordResetRoutes = require('./src/routes/passwordResets');
 const walletRoutes = require('./src/routes/wallets');
 const topupRoutes = require('./src/routes/topups');
 const purchaseRoutes = require('./src/routes/purchases');
@@ -112,6 +113,7 @@ const reportRoutes = require('./src/routes/reporting');
 
 // Register routes
 app.use('/api/auth', authRoutes);
+app.use('/api/password-resets', passwordResetRoutes);
 app.use('/api/wallets', walletRoutes);
 app.use('/api/topups', topupRoutes);
 app.use('/api/purchases', purchaseRoutes);

@@ -1,5 +1,6 @@
 const express = require('express');
 const AuthController = require('../controllers/AuthController');
+const PasswordResetController = require('../controllers/PasswordResetController');
 const { authenticateToken, authorizeSuperAdmin, optionalAuth, rateLimiter } = require('../middleware/auth');
 
 const router = express.Router();
@@ -25,8 +26,9 @@ router.post('/super-admins/promote', authenticateToken, authorizeSuperAdmin, Aut
  * @body    {identifier (email/username), password}
  */
 router.post('/login', AuthController.login);
-router.post('/forgot-password', rateLimiter(15 * 60 * 1000, 5), AuthController.forgotPassword);
-router.post('/reset-password', rateLimiter(15 * 60 * 1000, 10), AuthController.resetPassword);
+router.post('/forgot-password', rateLimiter(15 * 60 * 1000, 5), PasswordResetController.createRequest);
+router.post('/verify-reset-code', rateLimiter(15 * 60 * 1000, 10), PasswordResetController.verifyCode);
+router.post('/reset-password', rateLimiter(15 * 60 * 1000, 10), PasswordResetController.resetPassword);
 
 /**
  * @route   POST /api/auth/refresh-token

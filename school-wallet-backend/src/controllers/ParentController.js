@@ -2,13 +2,6 @@ const Parent = require('../models/Parent');
 const Student = require('../models/Student');
 const ResponseHandler = require('../utils/response');
 
-const normalizeValue = value => String(value || '')
-  .normalize('NFKD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .trim()
-  .replace(/\s+/g, ' ')
-  .toLowerCase();
-
 const linkStudent = async (req, res) => {
   try {
     const parent = await Parent.findOrCreateByUser(req.user);
@@ -18,7 +11,7 @@ const linkStudent = async (req, res) => {
 
     const requestedStudents = Array.isArray(req.body?.students)
       ? req.body.students
-      : [{ studentIdentifier: req.body?.studentIdentifier, lastName: req.body?.lastName }];
+      : [{ studentIdentifier: req.body?.studentIdentifier }];
     if (requestedStudents.length === 0 || requestedStudents.length > 50) {
       return ResponseHandler.badRequest(res, 'Provide between 1 and 50 students.');
     }
@@ -26,23 +19,14 @@ const linkStudent = async (req, res) => {
     const results = [];
     for (const [index, requestedStudent] of requestedStudents.entries()) {
       const studentIdentifier = String(requestedStudent?.studentIdentifier || '').trim();
-      const lastName = String(requestedStudent?.lastName || '').trim();
-      if (!studentIdentifier || !lastName) {
-        results.push({ row: index + 1, status: 'invalid', message: 'Student ID and surname or full name are required.' });
+      if (!studentIdentifier) {
+        results.push({ row: index + 1, status: 'invalid', message: 'Student ID is required.' });
         continue;
       }
 
       const student = await Student.findByStudentId(studentIdentifier);
       if (!student) {
         results.push({ row: index + 1, studentIdentifier, status: 'not_found', message: 'Student not found.' });
-        continue;
-      }
-
-      const providedName = normalizeValue(lastName);
-      const storedLastName = normalizeValue(student.last_name);
-      const storedFullName = normalizeValue(`${student.first_name} ${student.last_name}`);
-      if (providedName !== storedLastName && providedName !== storedFullName) {
-        results.push({ row: index + 1, studentIdentifier, status: 'not_verified', message: 'Student details could not be verified.' });
         continue;
       }
 
@@ -68,7 +52,6 @@ const linkStudent = async (req, res) => {
       const result = results[0];
       if (result.status === 'invalid') return ResponseHandler.badRequest(res, result.message);
       if (result.status === 'not_found') return ResponseHandler.notFound(res, result.message);
-      if (result.status === 'not_verified') return ResponseHandler.forbidden(res, result.message);
       return ResponseHandler.success(res, 'Student linked successfully.', {
         relationship: result.relationship,
         student: result.student
@@ -87,6 +70,32 @@ const linkStudent = async (req, res) => {
   }
 };
 
+const lookupStudent = async (req, res) => {
+  const studentIdentifier = String(req.query.studentId || '').trim();
+  const normalizedStudentId = studentIdentifier.replace(/[^a-zA-Z0-9]/g, '');
+  if (normalizedStudentId.length < 3 || normalizedStudentId.length > 50) {
+    return ResponseHandler.badRequest(res, 'Provide a valid student ID.');
+  }
+
+  try {
+    const student = await Student.lookupByStudentId(studentIdentifier);
+    if (!student || student.status !== 'active') {
+      return ResponseHandler.notFound(res, 'Student not found.');
+    }
+    return ResponseHandler.success(res, 'Student found.', {
+      student: {
+        id: student.id,
+        student_id: student.student_id,
+        first_name: student.first_name,
+        last_name: student.last_name
+      }
+    });
+  } catch (error) {
+    console.error('Parent student lookup error:', error.message);
+    return ResponseHandler.serverError(res, 'Failed to look up student.');
+  }
+};
+
 const getChildren = async (req, res) => {
   try {
     const parent = await Parent.findOrCreateByUser(req.user);
@@ -102,4 +111,4 @@ const getChildren = async (req, res) => {
   }
 };
 
-module.exports = { linkStudent, getChildren };
+module.exports = { linkStudent, getChildren, lookupStudent };

@@ -8,8 +8,6 @@ const ResponseHandler = require('../utils/response');
 const { query } = require('../config/database');
 const { getClient } = require('../config/database');
 const { isSuperAdmin } = require('../middleware/auth');
-const EmailService = require('../services/EmailService');
-const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 
 const PASSWORD_MIN_LENGTH = 12;
@@ -29,117 +27,6 @@ const normalizeLoginIdentifier = (identifier) => {
 };
 
 class AuthController {
-  static async forgotPassword(req, res) {
-    try {
-      const identifier = String(req.body?.identifier || '').trim();
-      if (!identifier) return ResponseHandler.badRequest(res, 'Email or username is required');
-
-      if (process.env.NODE_ENV === 'production' && !EmailService.isConfigured()) {
-        return ResponseHandler.error(res, 'Password reset email is not configured', 503);
-      }
-
-      const frontendOrigin = String(process.env.FRONTEND_URL || 'http://localhost:5173')
-        .split(',')[0]
-        .trim();
-      const frontendUrl = new URL(frontendOrigin);
-      if (!['https:', 'http:'].includes(frontendUrl.protocol)
-        || frontendUrl.username
-        || frontendUrl.password
-        || (process.env.NODE_ENV === 'production' && frontendUrl.protocol !== 'https:')) {
-        return ResponseHandler.error(res, 'Password reset frontend URL must use HTTPS', 503);
-      }
-      const frontendBase = frontendUrl.origin;
-
-      const emailResult = await query(
-        'SELECT id, email, status FROM users WHERE LOWER(BTRIM(email)) = LOWER(BTRIM($1))',
-        [identifier]
-      );
-      const user = emailResult.rows[0] || await User.findByUsername(identifier);
-      const message = 'If an account exists, password reset instructions will be sent.';
-      if (!user || user.status !== 'active') return ResponseHandler.success(res, message, { message });
-
-      const rawToken = crypto.randomBytes(32).toString('hex');
-      const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-      await query('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND used_at IS NULL', [user.id]);
-      await query(
-        `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
-         VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '30 minutes')`,
-        [user.id, tokenHash]
-      );
-
-      const resetUrl = new URL('/reset-password', frontendBase);
-      resetUrl.searchParams.set('token', rawToken);
-
-      if (EmailService.isConfigured()) {
-        try {
-          await EmailService.sendPasswordReset(user.email, resetUrl.toString());
-        } catch (error) {
-          await query(
-            'UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND used_at IS NULL',
-            [user.id]
-          );
-          console.error('Password reset email delivery failed:', error.message);
-          return ResponseHandler.error(res, 'Unable to send password reset email', 503);
-        }
-      } else if (process.env.NODE_ENV === 'production') {
-        return ResponseHandler.error(res, 'Password reset email is not configured', 503);
-      }
-
-      const response = { message };
-      if (process.env.NODE_ENV !== 'production' && !EmailService.isConfigured()) {
-        response.resetUrl = resetUrl.toString();
-      }
-      return ResponseHandler.success(res, message, response);
-    } catch (error) {
-      console.error('Forgot password error:', error.message);
-      return ResponseHandler.serverError(res, 'Unable to create password reset request');
-    }
-  }
-
-  static async resetPassword(req, res) {
-    let client;
-    try {
-      const { token, newPassword, confirmPassword } = req.body || {};
-      if (!token || !newPassword || !confirmPassword) return ResponseHandler.badRequest(res, 'Token and all password fields are required');
-      if (newPassword !== confirmPassword) return ResponseHandler.badRequest(res, 'Passwords do not match');
-      if (!isValidPassword(newPassword)) {
-        return ResponseHandler.badRequest(res, `Password must be at least ${PASSWORD_MIN_LENGTH} characters and no more than ${PASSWORD_MAX_BYTES} UTF-8 bytes`);
-      }
-      if (typeof token !== 'string' || !/^[a-f0-9]{64}$/i.test(token)) {
-        return ResponseHandler.badRequest(res, 'This password reset link is invalid or expired');
-      }
-
-      client = await getClient();
-      const tokenHash = crypto.createHash('sha256').update(String(token)).digest('hex');
-      await client.query('BEGIN');
-      const tokenResult = await client.query(
-        `SELECT id, user_id FROM password_reset_tokens
-         WHERE token_hash = $1 AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP
-         FOR UPDATE`,
-        [tokenHash]
-      );
-      if (!tokenResult.rows[0]) {
-        await client.query('ROLLBACK');
-        return ResponseHandler.badRequest(res, 'This password reset link is invalid or expired');
-      }
-
-      const passwordHash = await bcrypt.hash(newPassword, 10);
-      await client.query('UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [passwordHash, tokenResult.rows[0].user_id]);
-      await client.query(
-        'UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND used_at IS NULL',
-        [tokenResult.rows[0].user_id]
-      );
-      await client.query('COMMIT');
-      return ResponseHandler.success(res, 'Password reset successfully');
-    } catch (error) {
-      if (client) await client.query('ROLLBACK').catch(() => {});
-      console.error('Reset password error:', error.message);
-      return ResponseHandler.serverError(res, 'Unable to reset password');
-    } finally {
-      client?.release();
-    }
-  }
-
   /**
    * User Registration
    */
@@ -208,7 +95,8 @@ class AuthController {
         userId: user.id,
         username: user.username,
         email: user.email,
-        role: user.role
+        role: user.role,
+        tokenVersion: Number(user.token_version || 0)
       };
 
       if (role === 'student') {
@@ -572,13 +460,17 @@ class AuthController {
       if (!user || user.status === 'deleted') {
         return ResponseHandler.unauthorized(res, 'User no longer exists');
       }
+      if (Number(decoded.tokenVersion || 0) !== Number(user.token_version || 0)) {
+        return ResponseHandler.unauthorized(res, 'Invalid or expired refresh token');
+      }
 
       // Preserve vendor context on token refresh
       const payload = {
         userId: user.id,
         username: user.username,
         email: user.email,
-        role: user.role
+        role: user.role,
+        tokenVersion: Number(user.token_version || 0)
       };
       if (decoded.vendorId) {
         payload.vendorId = decoded.vendorId;

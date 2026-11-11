@@ -142,37 +142,59 @@ purchase `items_description` when available. The response includes
 
 ---
 
-### 2. Forgot Password
+### 2. Superadmin-Controlled Password Reset
 
 **Endpoint**: `POST /api/auth/forgot-password`
 
 **Request Body**:
 ```json
-{ "identifier": "john@example.com" }
+{ "email": "john@example.com" }
 ```
 
-The identifier may be an email address or username. The API returns the same
-success response whether an account exists or not. In production, configure
-SMTP (`MAIL_HOST`, `MAIL_PORT`, `MAIL_FROM`, `MAIL_USER`, and `MAIL_PASSWORD`)
-and set `FRONTEND_URL` to the HTTPS frontend origin. Reset tokens are stored
-only as SHA-256 hashes, expire after 30 minutes, and are invalidated when a new
-reset request is created.
+The API returns the same confirmation for unknown, inactive, and eligible
+accounts. Superadmin accounts use their separate recovery process and cannot
+submit requests through this endpoint. Each user may have one pending request.
 
-### 3. Reset Password
+Superadmin endpoints require a bearer access token and Superadmin role:
 
-**Endpoint**: `POST /api/auth/reset-password`
+- `GET /api/password-resets` lists recovery requests.
+- `GET /api/password-resets/:requestId/history` returns the audit history.
+- `POST /api/password-resets/:requestId/approve` approves a pending request.
+- `POST /api/password-resets/:requestId/reject` rejects a pending request.
+- `POST /api/password-resets/:requestId/code` generates a one-time display code.
+- `POST /api/password-resets/:requestId/revoke-code` revokes unused codes.
 
-**Request Body**:
+Generated codes contain 128 bits of randomness, are stored as SHA-256 hashes,
+expire after 15 minutes, and are returned only in the generation response.
+Generating another code invalidates every earlier unused code for that user.
+
+**Verify a code**: `POST /api/auth/verify-reset-code`
 ```json
 {
-  "token": "<token-from-reset-email>",
+  "email": "john@example.com",
+  "code": "<32-character-reset-code>"
+}
+```
+
+Five incorrect attempts lock the code. A successful verification returns a
+short-lived reset grant. Use it once at `POST /api/auth/reset-password`:
+
+```json
+{
+  "resetGrant": "<verified-reset-grant>",
   "newPassword": "AnotherSecurePassword123",
   "confirmPassword": "AnotherSecurePassword123"
 }
 ```
 
-The token can be used once. A successful reset invalidates all outstanding
-reset links for that account.
+Passwords must be at least 12 characters and no more than 72 UTF-8 bytes.
+Successful resets invalidate previously issued access and refresh JWTs by
+incrementing the user's token version. All lifecycle events are stored in the
+password-reset audit log; raw codes and passwords are never logged.
+
+Migration `004_superadmin_password_resets.sql` is applied by the existing
+startup migration runner, so Render deployments do not require a Shell session
+or manual database steps.
 
 ---
 

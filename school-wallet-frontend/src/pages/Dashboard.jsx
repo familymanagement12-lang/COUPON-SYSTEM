@@ -7,7 +7,8 @@ export default function Dashboard(){
   const { user } = useContext(AuthContext)
   const [wallet, setWallet] = useState(null)
   const [students, setStudents] = useState([])
-  const [studentLinks, setStudentLinks] = useState([{ studentIdentifier: '', lastName: '' }])
+  const [studentLinks, setStudentLinks] = useState([{ studentIdentifier: '' }])
+  const [studentPreviews, setStudentPreviews] = useState({})
   const [linkError, setLinkError] = useState(null)
   const [linkMessage, setLinkMessage] = useState(null)
 
@@ -36,19 +37,44 @@ export default function Dashboard(){
     load()
   },[user])
 
+  useEffect(() => {
+    let cancelled = false
+    const timeout = setTimeout(async () => {
+      const previews = await Promise.all(studentLinks.map(async student => {
+        const studentIdentifier = student.studentIdentifier.trim()
+        if (studentIdentifier.replace(/[^a-zA-Z0-9]/g, '').length < 3) return null
+        try {
+          const response = await api.get('/parents/me/students/lookup', { params: { studentId: studentIdentifier } })
+          return response.data.data.student
+        } catch {
+          return null
+        }
+      }))
+      if (!cancelled) {
+        setStudentPreviews(Object.fromEntries(previews.map((student, index) => [
+          index,
+          student ? { studentIdentifier: studentLinks[index].studentIdentifier.trim(), student } : null
+        ]).filter(([, preview]) => preview)))
+      }
+    }, 300)
+    return () => {
+      cancelled = true
+      clearTimeout(timeout)
+    }
+  }, [studentLinks])
+
   async function linkStudent(e) {
     e.preventDefault()
     setLinkError(null)
     setLinkMessage(null)
     const requestedStudents = studentLinks
       .map(student => ({
-        studentIdentifier: student.studentIdentifier.trim(),
-        lastName: student.lastName.trim()
+        studentIdentifier: student.studentIdentifier.trim()
       }))
-      .filter(student => student.studentIdentifier || student.lastName)
+      .filter(student => student.studentIdentifier)
 
-    if (!requestedStudents.length || requestedStudents.some(student => !student.studentIdentifier || !student.lastName)) {
-      setLinkError('Enter both the student ID and surname or full name for each child.')
+    if (!requestedStudents.length) {
+      setLinkError('Enter a student ID for each child.')
       return
     }
 
@@ -64,9 +90,9 @@ export default function Dashboard(){
       const failures = (results || []).filter(result => result.status !== 'linked')
       setStudentLinks(failures.map(result => {
         const requested = requestedStudents[result.row - 1]
-        return requested || { studentIdentifier: '', lastName: '' }
+        return requested || { studentIdentifier: '' }
       }))
-      if (!failures.length) setStudentLinks([{ studentIdentifier: '', lastName: '' }])
+      if (!failures.length) setStudentLinks([{ studentIdentifier: '' }])
       setLinkMessage(`${linkedCount} child${linkedCount === 1 ? '' : 'ren'} linked successfully.${failures.length ? ` ${failures.length} row(s) need attention.` : ''}`)
       if (failures.length) setLinkError(failures.map(result => `Row ${result.row}: ${result.message}`).join(' '))
     } catch (e) {
@@ -103,23 +129,20 @@ export default function Dashboard(){
         <>
           <section className="admin-section parent-children-section">
             <h2>Add your children</h2>
-            <p className="section-note">Add one or more children using each student's ID and surname or full name.</p>
+            <p className="section-note">Enter each student's ID to look up their name, then link the matched student.</p>
             <form className="auth-form" onSubmit={linkStudent}>
               {studentLinks.map((student, index) => (
                 <div className="form-grid parent-child-row" key={index}>
                   <div className="field">
                     <label htmlFor={`childStudentId-${index}`}>Student ID</label>
                     <input id={`childStudentId-${index}`} placeholder="Student ID" value={student.studentIdentifier} onChange={e => updateStudentLink(index, 'studentIdentifier', e.target.value)} required />
-                  </div>
-                  <div className="field">
-                    <label htmlFor={`childLastName-${index}`}>Surname or full name</label>
-                    <input id={`childLastName-${index}`} placeholder="Surname or full name" value={student.lastName} onChange={e => updateStudentLink(index, 'lastName', e.target.value)} required />
+                    {studentPreviews[index]?.studentIdentifier === student.studentIdentifier.trim() && <small className="student-link-preview" aria-live="polite">{studentPreviews[index].student.first_name} {studentPreviews[index].student.last_name}</small>}
                   </div>
                   {studentLinks.length > 1 && <button className="remove-row parent-child-remove" type="button" onClick={() => setStudentLinks(current => current.filter((_, studentIndex) => studentIndex !== index))}>Remove</button>}
                 </div>
               ))}
               <div className="upload-actions">
-                <button className="secondary-button" type="button" onClick={() => setStudentLinks(current => [...current, { studentIdentifier: '', lastName: '' }])}>Add another child</button>
+                <button className="secondary-button" type="button" onClick={() => setStudentLinks(current => [...current, { studentIdentifier: '' }])}>Add another child</button>
                 <button type="submit">Link children</button>
               </div>
             </form>

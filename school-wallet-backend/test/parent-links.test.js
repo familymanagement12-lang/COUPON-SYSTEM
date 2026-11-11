@@ -21,7 +21,7 @@ function response() {
   };
 }
 
-test('parent can link multiple verified children and receive row-level failures', async () => {
+test('parent can link multiple students by ID and receive row-level failures', async () => {
   const originalFindOrCreate = Parent.findOrCreateByUser;
   const originalFindByStudentId = Student.findByStudentId;
   const originalAssignParent = Student.assignParent;
@@ -44,26 +44,27 @@ test('parent can link multiple verified children and receive row-level failures'
       user: { id: 7 },
       body: {
         students: [
-          { studentIdentifier: 'STU001', lastName: 'Mensah' },
-          { studentIdentifier: 'STU002', lastName: 'Kojo Mensah' },
-          { studentIdentifier: 'STU404', lastName: 'Mensah' },
-          { studentIdentifier: 'STU003', lastName: 'Wrong' }
+          { studentIdentifier: 'STU001' },
+          { studentIdentifier: 'STU002' },
+          { studentIdentifier: 'STU404' },
+          { studentIdentifier: 'STU003' }
         ]
       }
     }, res);
 
     assert.equal(res.statusCode, 200);
-    assert.equal(res.body.data.linkedCount, 2);
-    assert.equal(res.body.data.failedCount, 2);
+    assert.equal(res.body.data.linkedCount, 3);
+    assert.equal(res.body.data.failedCount, 1);
     assert.deepEqual(res.body.data.results.map(result => result.status), [
       'linked',
       'linked',
       'not_found',
-      'not_verified'
+      'linked'
     ]);
     assert.deepEqual(linked, [
       { studentId: 1, parentId: 7 },
-      { studentId: 2, parentId: 7 }
+      { studentId: 2, parentId: 7 },
+      { studentId: 3, parentId: 7 }
     ]);
   } finally {
     Parent.findOrCreateByUser = originalFindOrCreate;
@@ -89,7 +90,7 @@ test('parent single-child linking request remains backward compatible', async ()
     const res = response();
     await ParentController.linkStudent({
       user: { id: 7 },
-      body: { studentIdentifier: 'STU001', lastName: 'Mensah' }
+      body: { studentIdentifier: 'STU001' }
     }, res);
 
     assert.equal(res.statusCode, 200);
@@ -99,5 +100,22 @@ test('parent single-child linking request remains backward compatible', async ()
     Parent.findOrCreateByUser = originalFindOrCreate;
     Student.findByStudentId = originalFindByStudentId;
     Student.assignParent = originalAssignParent;
+  }
+});
+
+test('parent ID lookup returns the matched student name', async () => {
+  const originalLookup = Student.lookupByStudentId;
+  Student.lookupByStudentId = async studentId => studentId === 'STU001'
+    ? { id: 1, student_id: 'STU001', first_name: 'Ama', last_name: 'Mensah', status: 'active' }
+    : null;
+
+  try {
+    const res = response();
+    await ParentController.lookupStudent({ query: { studentId: 'STU001' } }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.data.student.first_name, 'Ama');
+    assert.equal(res.body.data.student.last_name, 'Mensah');
+  } finally {
+    Student.lookupByStudentId = originalLookup;
   }
 });

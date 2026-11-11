@@ -7,6 +7,27 @@ const PaystackGateway = require('./PaystackGateway');
  * Handles wallet funding operations and payment processing
  */
 class TopUpService {
+  static getPaymentCallbackUrl() {
+    const frontendBase = String(process.env.FRONTEND_URL || 'http://localhost:5173')
+      .split(',')[0]
+      .trim()
+      .replace(/\/+$/, '');
+    const fallbackUrl = `${frontendBase}/topup`;
+    const configuredUrl = process.env.PAYMENT_RETURN_URL;
+    if (!configuredUrl) return fallbackUrl;
+
+    try {
+      const callback = new URL(configuredUrl);
+      const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(callback.hostname);
+      if (process.env.NODE_ENV === 'production' && (callback.protocol !== 'https:' || isLocalHost)) {
+        return fallbackUrl;
+      }
+      return callback.toString();
+    } catch {
+      return fallbackUrl;
+    }
+  }
+
   /**
    * Get available payment gateways
    */
@@ -119,7 +140,7 @@ class TopUpService {
         studentId,
         description: description || `McCarthy Hill Coupon Top-Up for ${wallet.student_id}`,
         transactionReference,
-        callbackUrl: process.env.PAYMENT_RETURN_URL || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/topup`
+        callbackUrl: this.getPaymentCallbackUrl()
       };
 
       // Initiate payment with gateway
@@ -278,6 +299,9 @@ class TopUpService {
     const gateway = this.getGateway('paystack');
     const verification = await gateway.verifyPayment(paymentReference);
     if (!verification.success) {
+      if (verification.status === 'failed') {
+        await this.failTopUp(paymentReference, verification.error || 'Paystack payment failed');
+      }
       throw new Error(verification.error || verification.message || 'Payment has not been completed');
     }
 
@@ -288,32 +312,46 @@ class TopUpService {
    * Fail top-up transaction
    */
   static async failTopUp(paymentReference, reason = null) {
+    const client = await getClient();
     try {
-      const txnResult = await query(
-        `SELECT * FROM payment_transactions WHERE provider_reference = $1`,
+      await client.query('BEGIN');
+      const txnResult = await client.query(
+        `SELECT pt.id, pt.wallet_transaction_id, pt.status,
+                wt.status AS wallet_transaction_status
+         FROM payment_transactions pt
+         JOIN wallet_transactions wt ON wt.id = pt.wallet_transaction_id
+         WHERE pt.provider_reference = $1
+         FOR UPDATE OF pt, wt`,
         [paymentReference]
       );
 
-      if (txnResult.rows.length === 0) {
+      const paymentTxn = txnResult.rows[0];
+      if (!paymentTxn) {
         throw new Error('Payment transaction not found');
       }
+      if (paymentTxn.status === 'completed' || paymentTxn.wallet_transaction_status === 'completed') {
+        await client.query('COMMIT');
+        return { transactionId: paymentTxn.id, status: 'completed' };
+      }
 
-      const paymentTxn = txnResult.rows[0];
-
-      // Update payment transaction status
-      await query(
-        `UPDATE payment_transactions 
-         SET status = 'failed', updated_at = CURRENT_TIMESTAMP 
-         WHERE id = $1`,
+      await client.query(
+        `UPDATE payment_transactions
+         SET status = 'failed', updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND status = 'pending'`,
         [paymentTxn.id]
       );
-
-      // Log audit
-      await query(
-        `INSERT INTO audit_logs (action, entity_type, entity_id, new_value) 
+      await client.query(
+        `UPDATE wallet_transactions
+         SET status = 'failed', updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND status = 'pending'`,
+        [paymentTxn.wallet_transaction_id]
+      );
+      await client.query(
+        `INSERT INTO audit_logs (action, entity_type, entity_id, new_value)
          VALUES ($1, $2, $3, $4)`,
         ['topup_failed', 'payment_transactions', paymentTxn.id, JSON.stringify({ reason })]
       );
+      await client.query('COMMIT');
 
       return {
         transactionId: paymentTxn.id,
@@ -321,8 +359,11 @@ class TopUpService {
         reason: reason || 'Payment failed'
       };
     } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
       console.error('Top-up failure error:', error);
       throw error;
+    } finally {
+      client.release();
     }
   }
 

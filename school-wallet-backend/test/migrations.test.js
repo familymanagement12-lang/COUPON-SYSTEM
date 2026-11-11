@@ -146,6 +146,19 @@ test('migration connection prefers direct Neon URL and supports pooled or local 
   assert.equal(local.password, 'local-secret');
 });
 
+test('superadmin reset migration adds versioned requests, hashed codes, and audit history', () => {
+  const migration = fs.readFileSync(
+    path.join(__dirname, '../migrations/004_superadmin_password_resets.sql'),
+    'utf8'
+  );
+  assert.match(migration, /token_version INTEGER NOT NULL DEFAULT 0/i);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS password_reset_requests/i);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS password_reset_codes/i);
+  assert.match(migration, /code_hash CHAR\(64\) NOT NULL UNIQUE/i);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS password_reset_audit/i);
+  assert.doesNotMatch(migration, /^\s*(DROP|DELETE\s+FROM|TRUNCATE)\b/im);
+});
+
 test('backend completes migrations and closes the migration pool before listening', async () => {
   const events = [];
   const logs = [];
