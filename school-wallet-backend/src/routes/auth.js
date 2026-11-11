@@ -26,7 +26,11 @@ router.post('/super-admins/promote', authenticateToken, authorizeSuperAdmin, Aut
  * @body    {identifier (email/username), password}
  */
 router.post('/login', AuthController.login);
-router.post('/forgot-password', rateLimiter(15 * 60 * 1000, 5), PasswordResetController.createRequest);
+router.post('/forgot-password', rateLimiter(
+	15 * 60 * 1000,
+	5,
+	req => `${req.ip || req.connection.remoteAddress}:${String(req.body?.email || '').trim().toLowerCase()}`
+), PasswordResetController.createRequest);
 router.post('/verify-reset-code', rateLimiter(15 * 60 * 1000, 10), PasswordResetController.verifyCode);
 router.post('/reset-password', rateLimiter(15 * 60 * 1000, 10), PasswordResetController.resetPassword);
 

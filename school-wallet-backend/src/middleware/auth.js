@@ -129,9 +129,9 @@ const optionalAuth = async (req, res, next) => {
 const rateLimiter = (() => {
   const requests = new Map();
 
-  return (windowMs = 15 * 60 * 1000, maxRequests = 100) => {
+  return (windowMs = 15 * 60 * 1000, maxRequests = 100, getKey = req => req.ip || req.connection.remoteAddress) => {
     return (req, res, next) => {
-      const key = req.ip || req.connection.remoteAddress;
+      const key = getKey(req);
       const now = Date.now();
       
       if (!requests.has(key)) {

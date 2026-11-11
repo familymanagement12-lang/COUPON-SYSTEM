@@ -14,6 +14,7 @@ delete process.env.MAIL_FROM;
 
 const database = require('../src/config/database');
 const AuthController = require('../src/controllers/AuthController');
+const { rateLimiter } = require('../src/middleware/auth');
 
 let queryHandler = async () => ({ rows: [] });
 let clientHandler = async () => ({ query: async () => ({ rows: [] }), release() {} });
@@ -160,6 +161,27 @@ test('existing login accepts a registered parent account and verifies its bcrypt
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.data.user.parentId, 31);
   assert.ok(res.body.data.tokens.accessToken);
+});
+
+test('password reset rate limit is isolated by normalized email for a shared IP', () => {
+  const limiter = rateLimiter(60_000, 1, req => `${req.ip}:${req.body.email.trim().toLowerCase()}`);
+  const request = email => ({ ip: '192.0.2.44', body: { email } });
+
+  const first = response();
+  let firstPassed = false;
+  limiter(request('person.one@example.test'), first, () => { firstPassed = true; });
+  assert.equal(firstPassed, true);
+
+  const normalizedDuplicate = response();
+  let duplicatePassed = false;
+  limiter(request(' PERSON.ONE@EXAMPLE.TEST '), normalizedDuplicate, () => { duplicatePassed = true; });
+  assert.equal(normalizedDuplicate.statusCode, 429);
+  assert.equal(duplicatePassed, false);
+
+  const anotherFamily = response();
+  let anotherPassed = false;
+  limiter(request('person.two@example.test'), anotherFamily, () => { anotherPassed = true; });
+  assert.equal(anotherPassed, true);
 });
 
 test('case-insensitive email migration is additive and versioned', async () => {
